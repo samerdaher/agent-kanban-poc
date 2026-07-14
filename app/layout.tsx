@@ -4,7 +4,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'AgentBoard — One Trigger. Full Context. Real Output.',
   description:
-    'POC: an agent-native Kanban board where Claude automatically picks up agent-ready tasks, builds context, executes and delivers real output.',
+    'Agent-native project management: a multi-user Kanban platform where Claude automatically picks up agent-ready tasks, builds context, executes and delivers real output.',
 };
 
 export const viewport: Viewport = {

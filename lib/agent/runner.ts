@@ -1,16 +1,29 @@
-import { getDb, getTask, addUpdate, saveDb } from '../store';
-import { Task } from '../types';
+import {
+  getTask,
+  saveTask,
+  addUpdate,
+  listTasks,
+  listResources,
+  listSprintAgentTasks,
+  listTasksByStatus,
+} from '../store';
+import { Task, BlockedKind } from '../types';
 import { executeTask } from './claude';
+import { notifySlack } from '../notify';
 
 /**
- * The agent runner. Watches for agent-ready tasks that enter the Sprint
- * column ("one trigger"), builds context, executes, posts important-only
- * updates and the final output, and handles Blocked transitions for unmet
- * dependencies, missing resources (MCPs / credentials) and human questions.
+ * The agent runner. Scans for agent-ready tasks in the Sprint column ("one
+ * trigger"), builds context from workspace memory, executes with Claude,
+ * posts important-only updates and the final output, and handles Blocked
+ * transitions (unmet dependencies, missing MCPs/credentials, human questions).
  *
- * Runs in-process; the running set lives on globalThis so dev-server HMR
- * doesn't double-run tasks.
+ * Runs in-process with a concurrency-limited queue; state that must survive
+ * dev-server HMR lives on globalThis. Because every phase transition is
+ * persisted to SQLite, a crash mid-run is recoverable: recoverInterrupted()
+ * re-queues in-flight tasks on boot.
  */
+
+const MAX_CONCURRENT = Math.max(1, Number(process.env.AGENT_CONCURRENCY || 3));
 
 const g = globalThis as unknown as { __agentRunnerActive?: Set<string> };
 function active(): Set<string> {
@@ -29,11 +42,10 @@ function keywords(text: string): Set<string> {
   );
 }
 
-/** "Memory": find similar completed tasks and reuse their outputs as context. */
+/** "Memory": find similar completed tasks in the workspace and reuse their outputs. */
 function buildContext(task: Task): { summary: string; sources: string[] } {
-  const db = getDb();
   const own = keywords(`${task.title} ${task.description} ${task.tags.join(' ')}`);
-  const scored = db.tasks
+  const scored = listTasks(task.workspaceId)
     .filter((t) => t.id !== task.id && t.status === 'completed' && t.output)
     .map((t) => {
       const other = keywords(`${t.title} ${t.description} ${t.tags.join(' ')}`);
@@ -59,20 +71,21 @@ function unmetDependencies(task: Task): Task[] {
 }
 
 function missingRequirements(task: Task): string[] {
-  const have = new Set(getDb().resources.map((r) => r.name.toLowerCase()));
+  const have = new Set(listResources(task.workspaceId).map((r) => r.name.toLowerCase()));
   return task.requirements.filter((r) => !have.has(r.toLowerCase()));
 }
 
-function block(task: Task, kind: 'dependency' | 'missing_resource' | 'human_question', detail: string, refs: string[]) {
+function block(task: Task, kind: BlockedKind, detail: string, refs: string[]) {
   task.status = 'blocked';
   task.blocked = { kind, detail, refs };
+  saveTask(task);
   addUpdate(task, 'problem', detail);
-  saveDb();
+  notifySlack(task, `🚧 *${task.title}* is blocked (${kind.replace('_', ' ')}): ${detail}`);
 }
 
 async function runPipeline(taskId: string) {
   const task = getTask(taskId);
-  if (!task) return;
+  if (!task || task.status !== 'sprint') return;
 
   // ---- Gate 1: dependencies -------------------------------------------
   const deps = unmetDependencies(task);
@@ -101,9 +114,9 @@ async function runPipeline(taskId: string) {
   // ---- Phase: building context ----------------------------------------
   task.status = 'building_context';
   task.blocked = null;
+  saveTask(task);
   addUpdate(task, 'status', 'Agent picked up the task. Building context…');
-  saveDb();
-  await sleep(2000);
+  await sleep(1500);
 
   const fresh = getTask(taskId);
   if (!fresh || fresh.status !== 'building_context') return; // moved by a human meanwhile
@@ -119,8 +132,8 @@ async function runPipeline(taskId: string) {
 
   // ---- Phase: executing -------------------------------------------------
   fresh.status = 'executing';
+  saveTask(fresh);
   addUpdate(fresh, 'status', 'Execution started.');
-  saveDb();
 
   const result = await executeTask(fresh, ctx.summary);
 
@@ -129,10 +142,13 @@ async function runPipeline(taskId: string) {
 
   if (result.importantUpdate) addUpdate(t2, 'info', result.importantUpdate);
   t2.output = result.output;
+  t2.attachments = result.attachments ?? [];
 
   // ---- Optional gate: human confirmation before completing -------------
   if (t2.askHuman && !t2.updates.some((u) => u.kind === 'answer')) {
-    t2.pendingQuestion = 'The deliverable is ready. Please review the output and confirm completion (or give corrections).';
+    t2.pendingQuestion =
+      'The deliverable is ready. Please review the output and confirm completion (or give corrections).';
+    saveTask(t2);
     addUpdate(t2, 'question', t2.pendingQuestion);
     block(t2, 'human_question', 'Waiting on a human answer before completing.', []);
     return;
@@ -145,64 +161,90 @@ function finish(task: Task) {
   task.status = 'completed';
   task.blocked = null;
   task.completedAt = new Date().toISOString();
+  saveTask(task);
   addUpdate(task, 'output', 'Final output attached. Task completed.');
-  saveDb();
-  // Completing this task may unblock others.
+  notifySlack(task, `✅ *${task.title}* completed — output attached to the card.`);
+  // Completing this task may unblock others (in any workspace via cross-refs).
   reconcileBlocked();
   triggerAgents();
 }
 
 /** Re-check blocked tasks: move back to sprint when their blocker is resolved. */
-export function reconcileBlocked() {
-  const db = getDb();
-  let changed = false;
-  for (const task of db.tasks) {
-    if (task.status !== 'blocked' || !task.blocked) continue;
+export function reconcileBlocked(workspaceId?: string) {
+  for (const stub of listTasksByStatus(['blocked'])) {
+    if (workspaceId && stub.workspaceId !== workspaceId) continue;
+    const task = getTask(stub.id);
+    if (!task || task.status !== 'blocked' || !task.blocked) continue;
     if (task.blocked.kind === 'dependency' && unmetDependencies(task).length === 0) {
       task.status = 'sprint';
       task.blocked = null;
-      addUpdate(task, 'status', 'Dependencies completed — task is ready again.');
-      changed = true;
+      saveTask(task);
+      addUpdate(task, 'status', 'Dependencies completed — task is ready again.', 'system');
     } else if (task.blocked.kind === 'missing_resource' && missingRequirements(task).length === 0) {
       task.status = 'sprint';
       task.blocked = null;
-      addUpdate(task, 'status', 'Required resources are now available — task is ready again.');
-      changed = true;
+      saveTask(task);
+      addUpdate(task, 'status', 'Required resources are now available — task is ready again.', 'system');
     }
   }
-  if (changed) saveDb();
 }
 
-/** The webhook: fires whenever board state changes. Picks up agent-ready sprint tasks. */
-export function triggerAgents() {
-  const db = getDb();
-  for (const task of db.tasks) {
-    if (task.type !== 'agent') continue;
-    if (task.status !== 'sprint') continue;
+/**
+ * The trigger: fires whenever board state changes (moves, creates, resources,
+ * webhook). Picks up agent-ready sprint tasks up to the concurrency limit.
+ */
+export function triggerAgents(workspaceId?: string) {
+  for (const task of listSprintAgentTasks(workspaceId)) {
+    if (active().size >= MAX_CONCURRENT) return; // queue drains as runs finish
     if (active().has(task.id)) continue;
     active().add(task.id);
     runPipeline(task.id)
       .catch((err) => {
         const t = getTask(task.id);
         if (t) {
-          addUpdate(t, 'problem', `Agent run failed: ${err instanceof Error ? err.message : String(err)}`);
           t.status = 'blocked';
-          t.blocked = { kind: 'missing_resource', detail: 'Agent run failed — see updates.', refs: [] };
-          saveDb();
+          t.blocked = {
+            kind: 'error',
+            detail: `Agent run failed: ${err instanceof Error ? err.message : String(err)}. Move the task back to Sprint to retry.`,
+            refs: [],
+          };
+          saveTask(t);
+          addUpdate(t, 'problem', t.blocked.detail);
         }
       })
-      .finally(() => active().delete(task.id));
+      .finally(() => {
+        active().delete(task.id);
+        // A slot opened — pick up anything still waiting in Sprint.
+        triggerAgents();
+      });
+  }
+}
+
+/**
+ * Crash recovery, called once on boot: tasks stuck mid-run (building_context /
+ * executing) are re-queued to Sprint so the trigger picks them up again.
+ */
+export function recoverInterrupted() {
+  for (const stub of listTasksByStatus(['building_context', 'executing'])) {
+    if (active().has(stub.id)) continue; // actually running in this process
+    const task = getTask(stub.id);
+    if (!task) continue;
+    task.status = 'sprint';
+    task.blocked = null;
+    saveTask(task);
+    addUpdate(task, 'problem', 'Server restarted mid-run — task re-queued automatically.', 'system');
   }
 }
 
 /** Human answered the agent's question → resume and complete. */
-export function answerQuestion(taskId: string, answer: string): Task | undefined {
+export function answerQuestion(taskId: string, answer: string, actor: string): Task | undefined {
   const task = getTask(taskId);
   if (!task || !task.pendingQuestion) return task;
-  addUpdate(task, 'answer', `Human: ${answer}`);
   task.pendingQuestion = null;
+  saveTask(task);
+  addUpdate(task, 'answer', answer, actor);
   if (task.status === 'blocked' && task.blocked?.kind === 'human_question') {
     finish(task);
   }
-  return task;
+  return getTask(taskId);
 }

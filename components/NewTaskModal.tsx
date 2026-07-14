@@ -4,11 +4,13 @@ import { useState } from 'react';
 import { Task, Resource, TaskType } from '@/lib/types';
 
 export default function NewTaskModal({
+  workspaceId,
   tasks,
   resources,
   onClose,
   onCreated,
 }: {
+  workspaceId: string;
   tasks: Task[];
   resources: Resource[];
   onClose: () => void;
@@ -24,12 +26,12 @@ export default function NewTaskModal({
   const [toSprint, setToSprint] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const depCandidates = tasks.filter((t) => t.status !== 'completed');
+  const depCandidates = tasks.filter((t) => t.status !== 'completed' && t.status !== 'archived');
 
   async function create() {
     if (!title.trim()) return;
     setBusy(true);
-    await fetch('/api/tasks', {
+    await fetch(`/api/workspaces/${workspaceId}/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -10,14 +10,17 @@ const STATUS_LABEL: Record<Task['status'], string> = {
   executing: 'Executing',
   blocked: 'Blocked',
   completed: 'Completed',
+  archived: 'Archived',
 };
 
 export default function TaskDetail({
+  workspaceId,
   task,
   allTasks,
   onClose,
   onChanged,
 }: {
+  workspaceId: string;
   task: Task;
   allTasks: Task[];
   onClose: () => void;
@@ -25,6 +28,7 @@ export default function TaskDetail({
 }) {
   const [answer, setAnswer] = useState('');
   const [busy, setBusy] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
 
   const depTitles = task.dependencies
     .map((id) => allTasks.find((t) => t.id === id))
@@ -34,7 +38,7 @@ export default function TaskDetail({
   async function sendAnswer() {
     if (!answer.trim()) return;
     setBusy(true);
-    await fetch(`/api/tasks/${task.id}/answer`, {
+    await fetch(`/api/workspaces/${workspaceId}/tasks/${task.id}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answer }),
@@ -45,11 +49,20 @@ export default function TaskDetail({
   }
 
   async function remove() {
-    if (!confirm(`Delete task “${task.title}”?`)) return;
-    await fetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
+    if (!confirm(`Delete task “${task.title}”? This cannot be undone.`)) return;
+    const res = await fetch(`/api/workspaces/${workspaceId}/tasks/${task.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || `Could not delete task (HTTP ${res.status}).`);
+      onChanged();
+      return;
+    }
     onChanged();
     onClose();
   }
+
+  const fileUrl = (name: string) =>
+    `/api/workspaces/${workspaceId}/tasks/${task.id}/files/${encodeURIComponent(name)}`;
 
   return (
     <>
@@ -70,6 +83,19 @@ export default function TaskDetail({
                 {t}
               </span>
             ))}
+          </div>
+          <div className="task-id-row">
+            ID: <code>{task.id}</code>
+            <button
+              className="btn small"
+              onClick={() => {
+                navigator.clipboard?.writeText(task.id);
+                setCopiedId(true);
+                setTimeout(() => setCopiedId(false), 1200);
+              }}
+            >
+              {copiedId ? '✓ copied' : 'copy'}
+            </button>
           </div>
         </div>
 
@@ -137,6 +163,27 @@ export default function TaskDetail({
             </div>
           )}
 
+          {task.attachments && task.attachments.length > 0 && (
+            <div className="section">
+              <h4>Attachments — real deliverables</h4>
+              <div className="res-list">
+                {task.attachments.map((a) => (
+                  <a
+                    key={a.name}
+                    className="res-item"
+                    style={{ textDecoration: 'none', color: 'var(--text)' }}
+                    href={fileUrl(a.name)}
+                  >
+                    📎 <span className="name">{a.name}</span>
+                    <span style={{ marginLeft: 'auto', color: 'var(--text-faint)', fontSize: 12 }}>
+                      {a.size >= 1024 ? `${Math.round(a.size / 1024)} KB` : `${a.size} B`} · download
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           {task.output && (
             <div className="section">
               <h4>Final Output</h4>
@@ -155,7 +202,19 @@ export default function TaskDetail({
                   </div>
                   <div className="tl-content">
                     <div className="txt">{u.text}</div>
-                    <div className="ts">{new Date(u.ts).toLocaleString()}</div>
+                    {u.kind === 'output' && task.attachments && task.attachments.length > 0 && (
+                      <div className="tl-files">
+                        {task.attachments.map((a) => (
+                          <a key={a.name} className="tl-file" href={fileUrl(a.name)}>
+                            📎 {a.name} <span>⬇ download</span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    <div className="ts">
+                      {u.actor && u.actor !== 'agent' ? `${u.actor} · ` : u.actor === 'agent' ? '🤖 agent · ' : ''}
+                      {new Date(u.ts).toLocaleString()}
+                    </div>
                   </div>
                 </div>
               ))}

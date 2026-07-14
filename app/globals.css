@@ -143,6 +143,42 @@ input, textarea, select { font-family: inherit; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
+.card.archived { opacity: 0.6; }
+.card .card-del {
+  position: absolute; top: 8px; right: 8px;
+  display: none;
+  background: var(--bg-raised); border: 1px solid var(--border-strong);
+  color: var(--text-faint); border-radius: 6px;
+  width: 22px; height: 22px; line-height: 1; font-size: 12px;
+  z-index: 2;
+}
+.card:hover .card-del { display: block; }
+.card .card-del:hover { color: var(--danger); border-color: var(--danger); }
+.card .task-id {
+  margin-top: 8px;
+  font-family: var(--mono); font-size: 10px; color: var(--text-faint);
+  user-select: all;
+}
+
+.task-id-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px; font-size: 12px; color: var(--text-faint);
+}
+.task-id-row code { font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); user-select: all; }
+
+.tl-files { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.tl-file {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; font-family: var(--mono);
+  color: var(--ok); text-decoration: none;
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.06);
+  border-radius: 7px; padding: 5px 9px;
+  width: fit-content;
+}
+.tl-file:hover { background: rgba(74, 222, 128, 0.13); }
+.tl-file span { color: var(--text-faint); font-family: var(--font); font-size: 11px; }
+
 .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--agent); animation: pulse 1.1s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.75); } }
 
@@ -192,6 +228,7 @@ input, textarea, select { font-family: inherit; }
 .st-executing { background: rgba(88, 196, 255, 0.16); color: var(--agent); }
 .st-blocked { background: rgba(248, 113, 113, 0.16); color: var(--danger); }
 .st-completed { background: rgba(74, 222, 128, 0.16); color: var(--ok); }
+.st-archived { background: rgba(102, 112, 137, 0.16); color: var(--text-faint); }
 
 .blocked-box {
   border: 1px solid rgba(248, 113, 113, 0.4);
@@ -288,6 +325,71 @@ input, textarea, select { font-family: inherit; }
 .res-item .name { font-family: var(--mono); }
 
 .mobile-move { display: none; }
+
+/* ---------- Topbar additions (platform) ---------- */
+.ws-select {
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 220px;
+}
+.ws-select:focus { outline: none; border-color: var(--accent); }
+
+.live-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--text-faint);
+  transition: background 0.3s;
+}
+.live-dot.on { background: var(--ok); box-shadow: 0 0 6px rgba(74, 222, 128, 0.6); }
+
+.user-chip { color: var(--text-dim); }
+.user-chip:hover { color: var(--text); }
+
+/* ---------- Auth page ---------- */
+.auth-page {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.auth-card {
+  width: min(400px, 100%);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 28px 26px;
+}
+.auth-tagline {
+  text-align: center; color: var(--text-faint);
+  font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  margin-bottom: 20px;
+}
+.auth-card .field input[type='password'],
+.field input.pw {
+  width: 100%; background: var(--bg-card); border: 1px solid var(--border-strong);
+  color: var(--text); border-radius: 8px; padding: 9px 11px; font-size: 13.5px;
+}
+.auth-card .field input:focus { outline: none; border-color: var(--accent); }
+.auth-submit { width: 100%; padding: 11px; font-size: 14px; margin-top: 4px; }
+.auth-error {
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.07);
+  color: var(--danger);
+  border-radius: 8px; padding: 9px 12px; font-size: 13px;
+  margin-bottom: 12px;
+}
+.auth-hint { margin-top: 16px; font-size: 12.5px; color: var(--text-faint); text-align: center; line-height: 1.5; }
+
+/* ---------- Members / webhook ---------- */
+.webhook-box {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px;
+  word-break: break-all; color: var(--text-dim);
+}
 
 @media (max-width: 720px) {
   .board { padding: 10px; gap: 10px; }
