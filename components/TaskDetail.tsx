@@ -35,14 +35,18 @@ export default function TaskDetail({
     .filter(Boolean)
     .map((t) => `${t!.title}${t!.status === 'completed' ? ' ✓' : ''}`);
 
-  async function sendAnswer() {
-    if (!answer.trim()) return;
+  async function sendAnswer(action: 'approve' | 'revise') {
+    if (action === 'revise' && !answer.trim()) return;
     setBusy(true);
-    await fetch(`/api/workspaces/${workspaceId}/tasks/${task.id}/answer`, {
+    const res = await fetch(`/api/workspaces/${workspaceId}/tasks/${task.id}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answer }),
+      body: JSON.stringify({ answer: answer.trim(), action }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || 'Could not send the answer.');
+    }
     setAnswer('');
     setBusy(false);
     onChanged();
@@ -114,24 +118,19 @@ export default function TaskDetail({
                 <p>
                   <strong>❓ Agent question:</strong> {task.pendingQuestion}
                 </p>
-                <div className="answer-row">
-                  <input
-                    className="field-input"
-                    style={{
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border-strong)',
-                      color: 'var(--text)',
-                      borderRadius: 8,
-                      padding: '8px 10px',
-                      fontSize: 13.5,
-                    }}
-                    placeholder="Type your answer…"
-                    value={answer}
-                    onChange={(e) => setAnswer(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && sendAnswer()}
-                  />
-                  <button className="btn primary" disabled={busy || !answer.trim()} onClick={sendAnswer}>
-                    Answer
+                <textarea
+                  className="answer-textarea"
+                  placeholder="Optional note when approving — required when requesting changes (be specific: it becomes a workspace lesson)."
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  rows={3}
+                />
+                <div className="answer-row" style={{ marginTop: 8 }}>
+                  <button className="btn primary" disabled={busy} onClick={() => sendAnswer('approve')}>
+                    ✓ Approve & complete
+                  </button>
+                  <button className="btn" disabled={busy || !answer.trim()} onClick={() => sendAnswer('revise')}>
+                    ↺ Request changes
                   </button>
                 </div>
               </div>
@@ -142,6 +141,47 @@ export default function TaskDetail({
             <div className="section">
               <h4>Description</h4>
               <p className="desc">{task.description}</p>
+            </div>
+          )}
+
+          {task.definitionOfDone && (
+            <div className="section">
+              <h4>Definition of done — graded & revised until it passes</h4>
+              <p className="desc dod-box">{task.definitionOfDone}</p>
+            </div>
+          )}
+
+          {task.runs && task.runs.length > 0 && (
+            <div className="section">
+              <h4>Runs & cost</h4>
+              <div className="runs-table">
+                {task.runs.map((r) => (
+                  <div className="run-row" key={r.id}>
+                    <span className="run-model">{r.simulated ? 'simulation' : r.model}</span>
+                    <span>
+                      {r.iterations} iter · {Math.round(r.durationMs / 1000)}s
+                    </span>
+                    <span>
+                      {(r.inputTokens + r.cacheReadTokens + r.cacheWriteTokens).toLocaleString()} in /{' '}
+                      {r.outputTokens.toLocaleString()} out
+                    </span>
+                    <span className="run-cost">{r.simulated ? '—' : `$${r.costUsd.toFixed(4)}`}</span>
+                    {r.outcome && (
+                      <span className={`chip ${r.outcome === 'passed' ? 'tag' : 'req'}`}>
+                        {r.outcome === 'passed' ? '✓ rubric' : '⚠ max iter'}
+                      </span>
+                    )}
+                  </div>
+                ))}
+                <div className="run-row total">
+                  <span>total</span>
+                  <span />
+                  <span />
+                  <span className="run-cost">
+                    ${task.runs.reduce((s, r) => s + r.costUsd, 0).toFixed(4)}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
 

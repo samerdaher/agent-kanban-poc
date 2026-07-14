@@ -4,11 +4,14 @@ import {
   addUpdate,
   listTasks,
   listResources,
+  listLessons,
   listSprintAgentTasks,
   listTasksByStatus,
+  recordRun,
 } from '../store';
 import { Task, BlockedKind } from '../types';
-import { executeTask } from './claude';
+import { executeTask, costUsd } from './claude';
+import { distillLesson } from './lessons';
 import { notifySlack } from '../notify';
 
 /**
@@ -42,26 +45,73 @@ function keywords(text: string): Set<string> {
   );
 }
 
-/** "Memory": find similar completed tasks in the workspace and reuse their outputs. */
-function buildContext(task: Task): { summary: string; sources: string[] } {
+/**
+ * Context framework. Every run gets three layers:
+ *  1. similar completed outputs (what worked before)
+ *  2. workspace lessons (distilled from failures & human corrections)
+ *  3. the task's own previous attempt + feedback, when it's a re-run
+ */
+function buildContext(task: Task): { summary: string; note: string } {
   const own = keywords(`${task.title} ${task.description} ${task.tags.join(' ')}`);
-  const scored = listTasks(task.workspaceId)
+  const overlapWith = (text: string) => {
+    const other = keywords(text);
+    let n = 0;
+    own.forEach((w) => other.has(w) && n++);
+    return n;
+  };
+
+  // 1 — similar completed outputs
+  const similar = listTasks(task.workspaceId)
     .filter((t) => t.id !== task.id && t.status === 'completed' && t.output)
-    .map((t) => {
-      const other = keywords(`${t.title} ${t.description} ${t.tags.join(' ')}`);
-      let overlap = 0;
-      own.forEach((w) => other.has(w) && overlap++);
-      return { t, overlap };
-    })
+    .map((t) => ({ t, overlap: overlapWith(`${t.title} ${t.description} ${t.tags.join(' ')}`) }))
     .filter((s) => s.overlap > 0)
     .sort((a, b) => b.overlap - a.overlap)
     .slice(0, 3);
+  const similarBlock = similar.length
+    ? `# Relevant past work in this workspace\n${similar
+        .map((s) => `From completed task “${s.t.title}”:\n${(s.t.output || '').slice(0, 800)}`)
+        .join('\n\n---\n\n')}`
+    : '';
 
-  if (!scored.length) return { summary: '', sources: [] };
-  const summary = scored
-    .map((s) => `From completed task “${s.t.title}”:\n${(s.t.output || '').slice(0, 800)}`)
-    .join('\n\n---\n\n');
-  return { summary, sources: scored.map((s) => s.t.title) };
+  // 2 — workspace lessons: matched-by-topic first, then most recent
+  const allLessons = listLessons(task.workspaceId);
+  const matched = allLessons
+    .map((l) => ({ l, overlap: overlapWith(l.text) }))
+    .sort((a, b) => b.overlap - a.overlap || (a.l.createdAt < b.l.createdAt ? 1 : -1));
+  const picked = matched.slice(0, 5).map((m) => m.l);
+  const lessonBlock = picked.length
+    ? `# Workspace lessons — learned from past failures & corrections; APPLY THESE\n${picked
+        .map((l) => `- ${l.text}`)
+        .join('\n')}`
+    : '';
+
+  // 3 — previous attempt: this is a re-run, revise instead of restarting
+  const problems = task.updates.filter((u) => u.kind === 'problem').slice(-3);
+  const answers = task.updates.filter((u) => u.kind === 'answer').slice(-3);
+  const isRerun = Boolean(task.output) || answers.length > 0;
+  const revisionBlock = isRerun
+    ? [
+        `# Previous attempt — this task is a RE-RUN. Revise the prior work; fix what was wrong; do not repeat mistakes.`,
+        task.output ? `## Prior output (excerpt)\n${task.output.slice(0, 1500)}` : '',
+        problems.length ? `## Problems from the last run\n${problems.map((p) => `- ${p.text}`).join('\n')}` : '',
+        answers.length
+          ? `## Human feedback — this overrides everything else\n${answers.map((a) => `- ${a.actor}: ${a.text}`).join('\n')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+    : '';
+
+  const summary = [similarBlock, lessonBlock, revisionBlock].filter(Boolean).join('\n\n---\n\n');
+  const parts = [
+    similar.length ? `${similar.length} similar output${similar.length > 1 ? 's' : ''}` : '',
+    picked.length ? `${picked.length} workspace lesson${picked.length > 1 ? 's' : ''}` : '',
+    isRerun ? 'previous-attempt history (revision mode)' : '',
+  ].filter(Boolean);
+  const note = parts.length
+    ? `Context built from workspace memory: ${parts.join(', ')}.`
+    : 'No similar past tasks or lessons found — proceeding from the task description.';
+  return { summary, note };
 }
 
 function unmetDependencies(task: Task): Task[] {
@@ -122,32 +172,43 @@ async function runPipeline(taskId: string) {
   if (!fresh || fresh.status !== 'building_context') return; // moved by a human meanwhile
 
   const ctx = buildContext(fresh);
-  addUpdate(
-    fresh,
-    'context',
-    ctx.sources.length
-      ? `Context built from workspace memory — reused output of: ${ctx.sources.map((s) => `“${s}”`).join(', ')}.`
-      : 'No similar past tasks found — proceeding from the task description and workspace knowledge base.',
-  );
+  addUpdate(fresh, 'context', ctx.note);
 
   // ---- Phase: executing -------------------------------------------------
   fresh.status = 'executing';
   saveTask(fresh);
   addUpdate(fresh, 'status', 'Execution started.');
 
+  const startedAt = Date.now();
   const result = await executeTask(fresh, ctx.summary);
 
   const t2 = getTask(taskId);
   if (!t2 || t2.status !== 'executing') return;
+
+  recordRun({
+    taskId: t2.id,
+    workspaceId: t2.workspaceId,
+    model: result.model,
+    simulated: result.simulated,
+    inputTokens: result.usage.input,
+    outputTokens: result.usage.output,
+    cacheReadTokens: result.usage.cacheRead,
+    cacheWriteTokens: result.usage.cacheWrite,
+    costUsd: result.simulated ? 0 : costUsd(result.model, result.usage),
+    durationMs: Date.now() - startedAt,
+    iterations: result.iterations,
+    outcome: result.outcome,
+  });
 
   if (result.importantUpdate) addUpdate(t2, 'info', result.importantUpdate);
   t2.output = result.output;
   t2.attachments = result.attachments ?? [];
 
   // ---- Optional gate: human confirmation before completing -------------
-  if (t2.askHuman && !t2.updates.some((u) => u.kind === 'answer')) {
+  // (asks after every revision too — only an explicit approval completes)
+  if (t2.askHuman) {
     t2.pendingQuestion =
-      'The deliverable is ready. Please review the output and confirm completion (or give corrections).';
+      'The deliverable is ready. Approve to complete, or request changes and the agent will revise.';
     saveTask(t2);
     addUpdate(t2, 'question', t2.pendingQuestion);
     block(t2, 'human_question', 'Waiting on a human answer before completing.', []);
@@ -210,6 +271,8 @@ export function triggerAgents(workspaceId?: string) {
           };
           saveTask(t);
           addUpdate(t, 'problem', t.blocked.detail);
+          // learn from the failure so the next run avoids it
+          void distillLesson(t, 'failure', t.blocked.detail);
         }
       })
       .finally(() => {
@@ -236,13 +299,35 @@ export function recoverInterrupted() {
   }
 }
 
-/** Human answered the agent's question → resume and complete. */
-export function answerQuestion(taskId: string, answer: string, actor: string): Task | undefined {
+/**
+ * Human answered the agent's question.
+ *  - approve → complete the task as delivered
+ *  - revise  → the answer is a correction: distill it into workspace memory
+ *              and re-queue the task; the next run revises with the feedback
+ */
+export function answerQuestion(
+  taskId: string,
+  answer: string,
+  actor: string,
+  action: 'approve' | 'revise' = 'approve',
+): Task | undefined {
   const task = getTask(taskId);
   if (!task || !task.pendingQuestion) return task;
   task.pendingQuestion = null;
   saveTask(task);
-  addUpdate(task, 'answer', answer, actor);
+
+  if (action === 'revise') {
+    addUpdate(task, 'answer', `Requested changes: ${answer}`, actor);
+    void distillLesson(task, 'correction', answer);
+    task.status = 'sprint';
+    task.blocked = null;
+    saveTask(task);
+    addUpdate(task, 'status', 'Human requested changes — task re-queued for revision.', 'system');
+    triggerAgents(task.workspaceId);
+    return getTask(taskId);
+  }
+
+  addUpdate(task, 'answer', answer || 'Approved.', actor);
   if (task.status === 'blocked' && task.blocked?.kind === 'human_question') {
     finish(task);
   }

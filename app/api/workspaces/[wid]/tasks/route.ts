@@ -32,6 +32,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ wid
       requirements: Array.isArray(body.requirements) ? body.requirements.map(String) : [],
       dependencies: Array.isArray(body.dependencies) ? body.dependencies.map(String) : [],
       askHuman: Boolean(body.askHuman),
+      definitionOfDone:
+        typeof body.definitionOfDone === 'string' && body.definitionOfDone.trim()
+          ? body.definitionOfDone.trim()
+          : null,
     },
     auth.user.id,
   );

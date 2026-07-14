@@ -17,9 +17,11 @@ export async function POST(
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
   const body = await req.json().catch(() => ({}));
-  if (!body.answer || typeof body.answer !== 'string') {
-    return NextResponse.json({ error: 'answer is required' }, { status: 400 });
+  const action = body.action === 'revise' ? 'revise' : 'approve';
+  const answer = typeof body.answer === 'string' ? body.answer.trim() : '';
+  if (action === 'revise' && !answer) {
+    return NextResponse.json({ error: 'Describe the changes you want when requesting a revision.' }, { status: 400 });
   }
-  const task = answerQuestion(id, body.answer, auth.user.name);
+  const task = answerQuestion(id, answer, auth.user.name, action);
   return NextResponse.json({ task });
 }

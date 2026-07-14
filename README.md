@@ -39,10 +39,30 @@ Backlog ──▶ Sprint ──▶ Building Context ──▶ Executing ──�
 - **External trigger** — `POST /api/webhooks/task-ready` with the workspace's webhook
   token lets any outside system (CI, cron, another tool) fire the agent scan.
 
+## The context framework — how the workspace learns
+
+Every agent run receives three layers of memory, and failure signals feed back in:
+
+1. **Relevant past work** — outputs of similar completed tasks (keyword retrieval).
+2. **Workspace lessons** — when a run fails or a human requests changes, Claude distills
+   the event into one generalizable lesson (🧠 Memory panel: review, delete, or teach your
+   own). The most relevant lessons are injected into every future run.
+3. **Revision mode** — a re-run task sees its own previous output, the problems from the
+   last run, and the human feedback, and revises instead of restarting.
+
+On top of that, **outcomes**: give a task a *definition of done* and an independent
+review pass grades the deliverable against it; the agent revises until it passes (or the
+iteration budget `AGENT_MAX_ITERATIONS`, default 2, is spent — unresolved feedback is
+appended for human follow-up). The human-review gate (`askHuman`) has two buttons:
+**Approve & complete**, or **Request changes** — which re-queues the task for revision
+*and* teaches the workspace.
+
 ## Platform features
 
 | Area | What you get |
 |---|---|
+| **Context & memory** | Three-layer run context (similar work, distilled lessons, revision history); approve/revise human gate; outcome grading against a definition of done |
+| **Cost tracking** | Every run records model, tokens, duration, iterations and cost; per-task breakdown on the card, workspace total in the top bar |
 | **Auth** | Email + password accounts (scrypt hashing), httpOnly session cookies (30-day, SHA-256-hashed server side), signup/login/logout |
 | **Workspaces** | Every user gets a seeded workspace on signup; create more; invite members by email; per-workspace webhook token |
 | **Persistence** | SQLite (WAL) via Node's built-in `node:sqlite` — no native deps, transactional, survives restarts |
@@ -74,6 +94,7 @@ Production build: `npm run build && npm start`.
 | `ANTHROPIC_API_KEY` | — | Real Claude execution (simulation mode without it) |
 | `CLAUDE_MODEL` | `claude-opus-4-8` | Model for agent runs |
 | `AGENT_CONCURRENCY` | `3` | Max simultaneous agent runs |
+| `AGENT_MAX_ITERATIONS` | `2` | Outcome-grading revise budget per run |
 | `AGENTBOARD_DATA_DIR` | `./data` | SQLite + vault key location |
 | `AGENTBOARD_SECRET_KEY` | auto-generated | 64-hex-char AES key for the credential vault |
 
@@ -127,7 +148,18 @@ All workspace routes require a session cookie + membership.
 | `POST /api/workspaces/:wid/tasks/:id/answer` | answer the agent's pending question |
 | `GET/POST /api/workspaces/:wid/resources`, `DELETE …/:rid` | workspace MCPs & credentials (optional encrypted secret) |
 | `GET /api/workspaces/:wid/events` | SSE stream of board changes |
+| `GET/POST /api/workspaces/:wid/lessons`, `DELETE …/:lid` | workspace memory (lessons) |
+| `GET /api/workspaces/:wid/stats` | run count, tokens, total cost |
 | `POST /api/webhooks/task-ready` | external trigger (`Authorization: Bearer <workspace webhook token>`) |
+| `POST /api/webhooks/tasks` | **inbound automation**: external systems create tasks (same bearer token) — e.g. Sentry alert → investigation task |
+
+## Operations
+
+- `npm test` — end-to-end API suite (isolated instance, simulation mode); CI runs it on
+  every push (`.github/workflows/ci.yml`).
+- `npm run backup` — WAL-checkpointed SQLite backup to `data/backups/` (nightly cron
+  recommended); see `deploy/DEPLOY.md`.
+- TLS: `deploy/Caddyfile` + instructions in `deploy/DEPLOY.md`.
 
 ## What the next iteration would add
 

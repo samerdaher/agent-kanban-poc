@@ -349,6 +349,38 @@ input, textarea, select { font-family: inherit; }
 .user-chip { color: var(--text-dim); }
 .user-chip:hover { color: var(--text); }
 
+.spend-chip {
+  font-family: var(--mono); font-size: 12px; font-weight: 700;
+  color: var(--ok);
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 999px; padding: 3px 10px;
+}
+
+.answer-textarea {
+  width: 100%; background: var(--bg-card); border: 1px solid var(--border-strong);
+  color: var(--text); border-radius: 8px; padding: 9px 11px; font-size: 13.5px;
+  resize: vertical; line-height: 1.5;
+}
+.answer-textarea:focus { outline: none; border-color: var(--accent); }
+
+.dod-box {
+  border: 1px solid rgba(124, 140, 255, 0.35);
+  background: rgba(124, 140, 255, 0.06);
+  border-radius: 8px; padding: 10px 12px;
+}
+
+.runs-table { display: flex; flex-direction: column; gap: 4px; }
+.run-row {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: var(--text-dim);
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 7px; padding: 7px 10px;
+}
+.run-row .run-model { font-family: var(--mono); color: var(--text); }
+.run-row .run-cost { margin-left: auto; font-family: var(--mono); color: var(--ok); }
+.run-row.total { background: none; border-style: dashed; font-weight: 700; }
+
 /* ---------- Auth page ---------- */
 .auth-page {
   min-height: 100vh; min-height: 100dvh;

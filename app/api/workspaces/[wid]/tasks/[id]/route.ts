@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireMember } from '@/lib/auth';
-import { getTask, saveTask, addUpdate, deleteTask } from '@/lib/store';
+import { getTask, saveTask, addUpdate, deleteTask, listRuns } from '@/lib/store';
 import { triggerAgents, reconcileBlocked } from '@/lib/agent/runner';
 import { TaskStatus } from '@/lib/types';
 
@@ -17,6 +17,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (auth instanceof NextResponse) return auth;
   const task = getTask(id);
   if (!task || task.workspaceId !== wid) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  task.runs = listRuns(id);
   return NextResponse.json({ task });
 }
 
@@ -84,11 +85,17 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     task.dependencies = body.dependencies.map(String);
     fieldsChanged = true;
   }
+  if (typeof body.definitionOfDone === 'string') {
+    task.definitionOfDone = body.definitionOfDone.trim() || null;
+    fieldsChanged = true;
+  }
   if (fieldsChanged) saveTask(task);
 
   reconcileBlocked(wid);
   triggerAgents(wid);
-  return NextResponse.json({ task: getTask(id) });
+  const updated = getTask(id);
+  if (updated) updated.runs = listRuns(id);
+  return NextResponse.json({ task: updated });
 }
 
 export async function DELETE(req: NextRequest, { params }: Params) {

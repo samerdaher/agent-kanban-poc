@@ -23,6 +23,7 @@ export default function NewTaskModal({
   const [requirements, setRequirements] = useState('');
   const [deps, setDeps] = useState<string[]>([]);
   const [askHuman, setAskHuman] = useState(false);
+  const [definitionOfDone, setDefinitionOfDone] = useState('');
   const [toSprint, setToSprint] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -43,6 +44,7 @@ export default function NewTaskModal({
         requirements: requirements.split(',').map((s) => s.trim()).filter(Boolean),
         dependencies: deps,
         askHuman,
+        definitionOfDone: definitionOfDone.trim() || undefined,
       }),
     });
     setBusy(false);
@@ -86,6 +88,21 @@ export default function NewTaskModal({
           <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="backend, billing (comma-separated)" />
           <div className="help">Tags also power context matching against completed tasks.</div>
         </div>
+
+        {type === 'agent' && (
+          <div className="field">
+            <label>Definition of done (optional)</label>
+            <textarea
+              value={definitionOfDone}
+              onChange={(e) => setDefinitionOfDone(e.target.value)}
+              placeholder={'Checkable acceptance criteria, e.g.\n- exactly 5 tweets\n- each under 280 chars\n- includes a call to action'}
+            />
+            <div className="help">
+              When set, an independent review grades the deliverable against this and the agent revises until
+              it passes.
+            </div>
+          </div>
+        )}
 
         {type === 'agent' && (
           <div className="field">

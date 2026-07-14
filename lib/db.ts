@@ -76,6 +76,33 @@ CREATE TABLE IF NOT EXISTS task_updates (
   text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_updates_task ON task_updates(task_id);
+CREATE TABLE IF NOT EXISTS lessons (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  source_task_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lessons_ws ON lessons(workspace_id);
+CREATE TABLE IF NOT EXISTS task_runs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  simulated INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  iterations INTEGER NOT NULL DEFAULT 1,
+  outcome TEXT,
+  ts TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runs_task ON task_runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_runs_ws ON task_runs(workspace_id);
 CREATE TABLE IF NOT EXISTS resources (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -96,6 +123,9 @@ function migrateColumns(d: DatabaseSync) {
   const taskCols = (d.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((c) => c.name);
   if (!taskCols.includes('attachments')) {
     d.exec("ALTER TABLE tasks ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!taskCols.includes('definition_of_done')) {
+    d.exec('ALTER TABLE tasks ADD COLUMN definition_of_done TEXT');
   }
 }
 

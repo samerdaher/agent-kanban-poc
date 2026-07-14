@@ -7,6 +7,7 @@ import TaskDetail from '@/components/TaskDetail';
 import NewTaskModal from '@/components/NewTaskModal';
 import ResourcesModal from '@/components/ResourcesModal';
 import MembersModal from '@/components/MembersModal';
+import LessonsModal from '@/components/LessonsModal';
 
 export default function WorkspaceApp({
   workspaceId,
@@ -23,8 +24,10 @@ export default function WorkspaceApp({
   const [showNew, setShowNew] = useState(false);
   const [showResources, setShowResources] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
+  const [showLessons, setShowLessons] = useState(false);
   const [live, setLive] = useState(false);
   const [creatingWs, setCreatingWs] = useState(false);
+  const [spend, setSpend] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -36,6 +39,10 @@ export default function WorkspaceApp({
       const data = await res.json();
       setTasks(data.tasks || []);
       setResources(data.resources || []);
+      fetch(`/api/workspaces/${workspaceId}/stats`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setSpend(typeof d.stats?.costUsd === 'number' ? d.stats.costUsd : null))
+        .catch(() => {});
     } catch {
       /* transient failure — SSE reconnect / fallback poll will retry */
     }
@@ -109,7 +116,15 @@ export default function WorkspaceApp({
           <option value="__new__">＋ New workspace…</option>
         </select>
         <span className={`live-dot${live ? ' on' : ''}`} title={live ? 'Live updates connected' : 'Reconnecting…'} />
+        {spend !== null && spend > 0 && (
+          <span className="spend-chip" title="Total agent spend in this workspace (all runs)">
+            ${spend < 1 ? spend.toFixed(3) : spend.toFixed(2)}
+          </span>
+        )}
         <div className="spacer" />
+        <button className="btn" onClick={() => setShowLessons(true)}>
+          🧠 Memory
+        </button>
         <button className="btn" onClick={() => setShowMembers(true)}>
           👥 Members
         </button>
@@ -156,6 +171,7 @@ export default function WorkspaceApp({
         />
       )}
       {showMembers && <MembersModal workspaceId={workspaceId} onClose={() => setShowMembers(false)} />}
+      {showLessons && <LessonsModal workspaceId={workspaceId} onClose={() => setShowLessons(false)} />}
     </div>
   );
 }

@@ -1,0 +1,30 @@
+# AgentBoard reverse proxy with automatic HTTPS.
+#
+# WITH A DOMAIN (recommended — free auto-renewing Let's Encrypt cert):
+#   1. Point an A record (e.g. board.yourdomain.com) at this server's IP.
+#   2. Replace the site address below with your domain.
+#
+# WITHOUT A DOMAIN: keep the ":443" + "tls internal" variant at the bottom
+# instead — traffic is encrypted but browsers show a self-signed warning.
+
+board.example.com {
+    reverse_proxy localhost:3000
+
+    # SSE needs buffering off (Caddy streams by default, this makes it explicit)
+    @sse path /api/workspaces/*/events
+    reverse_proxy @sse localhost:3000 {
+        flush_interval -1
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+    }
+}
+
+# --- no-domain fallback (self-signed): delete the block above and uncomment ---
+# :443 {
+#     tls internal
+#     reverse_proxy localhost:3000
+# }

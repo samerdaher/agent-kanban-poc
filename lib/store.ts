@@ -7,6 +7,9 @@ import {
   Task,
   TaskUpdate,
   UpdateKind,
+  TaskRun,
+  Lesson,
+  LessonKind,
   Resource,
   ResourceKind,
   User,
@@ -180,6 +183,7 @@ function rowToTask(r: Record<string, unknown>, updates: TaskUpdate[]): Task {
     updates,
     output: (r.output as string) ?? null,
     attachments: r.attachments ? JSON.parse(r.attachments as string) : [],
+    definitionOfDone: (r.definition_of_done as string) ?? null,
     createdBy: (r.created_by as string) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
@@ -204,7 +208,11 @@ export function listTasks(workspaceId: string): Task[] {
   const rows = db()
     .prepare('SELECT * FROM tasks WHERE workspace_id = ? ORDER BY created_at DESC')
     .all(workspaceId) as Record<string, unknown>[];
-  return rows.map((r) => rowToTask(r, loadUpdates(r.id as string)));
+  return rows.map((r) => {
+    const task = rowToTask(r, loadUpdates(r.id as string));
+    task.runs = listRuns(task.id);
+    return task;
+  });
 }
 
 export function getTask(id: string): Task | undefined {
@@ -254,6 +262,7 @@ export function createTask(
     updates: [],
     output: null,
     attachments: [],
+    definitionOfDone: null,
     createdBy,
     createdAt: now(),
     updatedAt: now(),
@@ -264,8 +273,8 @@ export function createTask(
     .prepare(
       `INSERT INTO tasks (id, workspace_id, title, description, type, status, priority, tags,
         requirements, dependencies, ask_human, blocked, pending_question, output, attachments,
-        created_by, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        definition_of_done, created_by, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       task.id,
@@ -283,6 +292,7 @@ export function createTask(
       task.pendingQuestion,
       task.output,
       JSON.stringify(task.attachments),
+      task.definitionOfDone,
       task.createdBy,
       task.createdAt,
       task.updatedAt,
@@ -299,7 +309,7 @@ export function saveTask(task: Task) {
     .prepare(
       `UPDATE tasks SET title = ?, description = ?, status = ?, priority = ?, tags = ?,
         requirements = ?, dependencies = ?, ask_human = ?, blocked = ?, pending_question = ?,
-        output = ?, attachments = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
+        output = ?, attachments = ?, definition_of_done = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
     )
     .run(
       task.title,
@@ -314,6 +324,7 @@ export function saveTask(task: Task) {
       task.pendingQuestion,
       task.output,
       JSON.stringify(task.attachments),
+      task.definitionOfDone,
       task.updatedAt,
       task.completedAt,
       task.id,
@@ -414,6 +425,124 @@ export function getResourceSecret(workspaceId: string, name: string): string | n
     .prepare('SELECT secret_enc FROM resources WHERE workspace_id = ? AND name = ?')
     .get(workspaceId, name) as { secret_enc: string | null } | undefined;
   return row?.secret_enc ? decryptSecret(row.secret_enc) : null;
+}
+
+/* ============================== lessons ================================ */
+
+function rowToLesson(r: Record<string, unknown>): Lesson {
+  return {
+    id: r.id as string,
+    workspaceId: r.workspace_id as string,
+    text: r.text as string,
+    kind: r.kind as LessonKind,
+    sourceTaskId: (r.source_task_id as string) ?? null,
+    createdAt: r.created_at as string,
+  };
+}
+
+export function addLesson(
+  workspaceId: string,
+  text: string,
+  kind: LessonKind,
+  sourceTaskId: string | null,
+): Lesson {
+  const lesson: Lesson = {
+    id: uid('l'),
+    workspaceId,
+    text: text.trim().slice(0, 300),
+    kind,
+    sourceTaskId,
+    createdAt: now(),
+  };
+  db()
+    .prepare('INSERT INTO lessons (id, workspace_id, text, kind, source_task_id, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(lesson.id, workspaceId, lesson.text, kind, sourceTaskId, lesson.createdAt);
+  publish(workspaceId);
+  return lesson;
+}
+
+export function listLessons(workspaceId: string): Lesson[] {
+  const rows = db()
+    .prepare('SELECT * FROM lessons WHERE workspace_id = ? ORDER BY created_at DESC')
+    .all(workspaceId) as Record<string, unknown>[];
+  return rows.map(rowToLesson);
+}
+
+export function deleteLesson(workspaceId: string, lessonId: string): boolean {
+  const info = db().prepare('DELETE FROM lessons WHERE id = ? AND workspace_id = ?').run(lessonId, workspaceId);
+  if (Number(info.changes) === 0) return false;
+  publish(workspaceId);
+  return true;
+}
+
+/* ================================ runs ================================= */
+
+function rowToRun(r: Record<string, unknown>): TaskRun {
+  return {
+    id: r.id as string,
+    taskId: r.task_id as string,
+    model: r.model as string,
+    simulated: Boolean(r.simulated),
+    inputTokens: Number(r.input_tokens),
+    outputTokens: Number(r.output_tokens),
+    cacheReadTokens: Number(r.cache_read_tokens),
+    cacheWriteTokens: Number(r.cache_write_tokens),
+    costUsd: Number(r.cost_usd),
+    durationMs: Number(r.duration_ms),
+    iterations: Number(r.iterations),
+    outcome: (r.outcome as string) ?? null,
+    ts: r.ts as string,
+  };
+}
+
+export function recordRun(run: Omit<TaskRun, 'id' | 'ts'> & { workspaceId: string }): TaskRun {
+  const full = { ...run, id: uid('run'), ts: now() };
+  db()
+    .prepare(
+      `INSERT INTO task_runs (id, task_id, workspace_id, model, simulated, input_tokens, output_tokens,
+        cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, iterations, outcome, ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      full.id,
+      full.taskId,
+      full.workspaceId,
+      full.model,
+      full.simulated ? 1 : 0,
+      full.inputTokens,
+      full.outputTokens,
+      full.cacheReadTokens,
+      full.cacheWriteTokens,
+      full.costUsd,
+      full.durationMs,
+      full.iterations,
+      full.outcome,
+      full.ts,
+    );
+  return full;
+}
+
+export function listRuns(taskId: string): TaskRun[] {
+  const rows = db().prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY ts').all(taskId) as Record<
+    string,
+    unknown
+  >[];
+  return rows.map(rowToRun);
+}
+
+export function workspaceStats(workspaceId: string): {
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+} {
+  const r = db()
+    .prepare(
+      `SELECT COUNT(*) AS runs, COALESCE(SUM(input_tokens),0) AS it, COALESCE(SUM(output_tokens),0) AS ot,
+        COALESCE(SUM(cost_usd),0) AS cost FROM task_runs WHERE workspace_id = ?`,
+    )
+    .get(workspaceId) as { runs: number; it: number; ot: number; cost: number };
+  return { runs: Number(r.runs), inputTokens: Number(r.it), outputTokens: Number(r.ot), costUsd: Number(r.cost) };
 }
 
 /* ===================== seed & legacy JSON import ======================= */
