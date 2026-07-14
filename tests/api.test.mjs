@@ -61,6 +61,7 @@ before(async () => {
         ...process.env,
         AGENTBOARD_DATA_DIR: DATA,
         ANTHROPIC_API_KEY: '', // force simulation mode (overrides .env)
+        AGENT_EXECUTOR: 'api', // never route test runs to a local Claude subscription
         NODE_ENV: 'production',
       },
       stdio: 'ignore',

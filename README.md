@@ -63,6 +63,7 @@ appended for human follow-up). The human-review gate (`askHuman`) has two button
 |---|---|
 | **Context & memory** | Three-layer run context (similar work, distilled lessons, revision history); approve/revise human gate; outcome grading against a definition of done |
 | **Cost tracking** | Every run records model, tokens, duration, iterations and cost; per-task breakdown on the card, workspace total in the top bar |
+| **Hybrid executor** | `AGENT_EXECUTOR=hybrid`: plain tasks and file deliverables (generated locally with LibreOffice) run on the Claude subscription at $0; API credits only for MCP-connected tasks; automatic fallback subscription → API → simulation |
 | **Auth** | Email + password accounts (scrypt hashing), httpOnly session cookies (30-day, SHA-256-hashed server side), signup/login/logout |
 | **Workspaces** | Every user gets a seeded workspace on signup; create more; invite members by email; per-workspace webhook token |
 | **Persistence** | SQLite (WAL) via Node's built-in `node:sqlite` — no native deps, transactional, survives restarts |
@@ -92,7 +93,8 @@ Production build: `npm run build && npm start`.
 | Variable | Default | Purpose |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Real Claude execution (simulation mode without it) |
-| `CLAUDE_MODEL` | `claude-opus-4-8` | Model for agent runs |
+| `AGENT_EXECUTOR` | `api` | `hybrid`: run text & LibreOffice file tasks on the machine's **Claude subscription** (headless `claude -p` with the claude.ai login — $0 credits) and reserve API credits for MCP-connected work. `subscription`: subscription only. Requires Claude Code logged in on the server; personal use |
+| `CLAUDE_MODEL` | `claude-opus-4-8` | Model for API agent runs |
 | `AGENT_CONCURRENCY` | `3` | Max simultaneous agent runs |
 | `AGENT_MAX_ITERATIONS` | `2` | Outcome-grading revise budget per run |
 | `AGENTBOARD_DATA_DIR` | `./data` | SQLite + vault key location |

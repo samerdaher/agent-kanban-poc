@@ -4,6 +4,12 @@ import path from 'node:path';
 import { Task, TaskAttachment } from '../types';
 import { listResources, getResourceSecret } from '../store';
 import { DATA_DIR } from '../db';
+import {
+  subscriptionAvailable,
+  sofficeAvailable,
+  subscriptionText,
+  subscriptionFileTask,
+} from './subscription';
 
 export interface RunUsage {
   input: number;
@@ -19,6 +25,8 @@ export interface ExecutionResult {
   attachments?: TaskAttachment[];
   model: string;
   usage: RunUsage;
+  /** what this run actually cost — 0 for subscription and simulation runs */
+  billedUsd: number;
   iterations: number;
   /** rubric grading result: 'passed' | 'max_iterations' | null (no rubric) */
   outcome: string | null;
@@ -27,8 +35,15 @@ export interface ExecutionResult {
 export const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-8';
 const MAX_ITERATIONS = Math.max(1, Number(process.env.AGENT_MAX_ITERATIONS || 2));
 
+/** 'api' (credits only) | 'subscription' (Claude Pro/Max only) | 'hybrid' */
+const EXECUTOR = process.env.AGENT_EXECUTOR || 'api';
+
 export function hasApiKey(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
+export function subscriptionEnabled(): boolean {
+  return EXECUTOR !== 'api' && subscriptionAvailable();
 }
 
 /* ------------------------------ pricing -------------------------------- */
@@ -294,6 +309,126 @@ async function gradeDeliverable(
   return { ...parsed, usage: usageOf(message) };
 }
 
+/* ---------------------- subscription pipeline -------------------------- */
+
+/** Extract the first JSON object from possibly-chatty CLI text. */
+function parseJsonLoose(text: string): { pass: boolean; feedback: string } | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const j = JSON.parse(match[0]);
+    if (typeof j.pass === 'boolean') return { pass: j.pass, feedback: String(j.feedback || '') };
+  } catch {
+    /* not JSON */
+  }
+  return null;
+}
+
+async function gradeViaSubscription(
+  rubric: string,
+  output: string,
+): Promise<{ pass: boolean; feedback: string; usage: RunUsage }> {
+  const res = await subscriptionText(
+    'You are a strict, fair reviewer. Grade the deliverable ONLY against the definition of done — no extra requirements. Respond with ONLY a JSON object: {"pass": boolean, "feedback": string}. If it fails, the feedback must be specific and actionable.',
+    `# Definition of done\n${rubric}\n\n# Deliverable\n${output.slice(0, 8000)}\n\nDoes the deliverable meet the definition of done?`,
+  );
+  const parsed = parseJsonLoose(res.text);
+  if (!parsed) throw new Error('grader returned no JSON');
+  return { ...parsed, usage: res.usage };
+}
+
+/**
+ * Runs the whole attempt/grade/revise loop on the Claude subscription
+ * (headless Claude Code). File deliverables are produced locally with
+ * LibreOffice instead of the API code-execution container.
+ */
+async function runSubscriptionPipeline(
+  task: Task,
+  context: string,
+  fileSkill: FileSkill | null,
+): Promise<ExecutionResult> {
+  const usage = emptyUsage();
+  let iterations = 1;
+  let outcome: string | null = null;
+  let reviewerNote = '';
+  let model = 'subscription:claude-code';
+  let attachments: TaskAttachment[] = [];
+
+  const attemptOnce = async (ctx: string): Promise<string> => {
+    if (fileSkill) {
+      const workdir = path.join(DATA_DIR, 'files', task.id);
+      const slug = task.title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'deliverable';
+      const sys = `${SYSTEM_PROMPT}
+- This task's deliverable is a real ${fileSkill.toUpperCase()} file. CREATE THE ACTUAL FILE named ${slug}.${fileSkill} in the current working directory.
+- LibreOffice is installed: author content (e.g. Flat ODF .fodp/.fods/.fodt, or HTML) and convert with \`soffice --headless --convert-to ${fileSkill} <file>\`, then verify the output file exists.
+- After the file is created, reply with a brief markdown summary of what you built.`;
+      const res = await subscriptionFileTask(sys, userContentFor(task, ctx), workdir);
+      accumulate(usage, res.usage);
+      model = res.model;
+      attachments = res.files.map((name) => ({
+        name,
+        size: fs.statSync(path.join(workdir, name)).size,
+        createdAt: new Date().toISOString(),
+      }));
+      return res.text || '(no text summary returned)';
+    }
+    const res = await subscriptionText(SYSTEM_PROMPT, userContentFor(task, ctx));
+    accumulate(usage, res.usage);
+    model = res.model;
+    return res.text || '(the agent returned no text output)';
+  };
+
+  let output = await attemptOnce(context);
+
+  if (task.definitionOfDone?.trim()) {
+    for (;;) {
+      let grade;
+      try {
+        grade = await gradeViaSubscription(task.definitionOfDone, output);
+      } catch {
+        outcome = 'passed';
+        reviewerNote = 'Outcome check skipped (grader unavailable).';
+        break;
+      }
+      accumulate(usage, grade.usage);
+      if (grade.pass) {
+        outcome = 'passed';
+        reviewerNote = `Outcome check: passed the definition of done after ${iterations} iteration${iterations > 1 ? 's' : ''}. ✓`;
+        break;
+      }
+      if (iterations >= MAX_ITERATIONS) {
+        outcome = 'max_iterations';
+        reviewerNote = `Outcome check: still failing after ${iterations} iterations — reviewer feedback appended for human follow-up.`;
+        output += `\n\n---\n\n### ⚠️ Unresolved reviewer feedback\n${grade.feedback}`;
+        break;
+      }
+      iterations++;
+      output = await attemptOnce(
+        `${context}\n\n# Reviewer feedback on your previous attempt — fix every point\n${grade.feedback}\n\n# Your previous attempt (excerpt)\n${output.slice(0, 4000)}`,
+      );
+    }
+  }
+
+  const fileNote = fileSkill
+    ? attachments.length
+      ? `Generated locally with LibreOffice: ${attachments.map((a) => a.name).join(', ')} (attached to the card).`
+      : `Expected a ${fileSkill} file but none was produced — see the text output.`
+    : '';
+  const notes = [fileNote, reviewerNote].filter(Boolean).join(' ');
+  return {
+    output,
+    attachments,
+    importantUpdate:
+      `Executing on the Claude subscription (${model.replace('subscription:', '')}) — deliverable produced (${usage.output} output tokens, ${iterations} iteration${iterations > 1 ? 's' : ''}, $0 credits). ${notes}`.trim(),
+    simulated: false,
+    model,
+    usage,
+    billedUsd: 0,
+    iterations,
+    outcome,
+  };
+}
+
 /* ------------------------------ simulate ------------------------------- */
 
 function simulate(task: Task, context: string): ExecutionResult {
@@ -320,6 +455,7 @@ function simulate(task: Task, context: string): ExecutionResult {
     simulated: true,
     model: 'simulation',
     usage: emptyUsage(),
+    billedUsd: 0,
     iterations: 1,
     outcome: task.definitionOfDone ? 'passed' : null,
   };
@@ -328,9 +464,48 @@ function simulate(task: Task, context: string): ExecutionResult {
 /* ------------------------------ orchestration -------------------------- */
 
 export async function executeTask(task: Task, context: string): Promise<ExecutionResult> {
-  if (!hasApiKey()) return simulate(task, context);
+  const sub = subscriptionEnabled();
+  if (!hasApiKey() && !sub) return simulate(task, context);
 
-  const mcps = mcpConnectionsForTask(task);
+  const mcps = hasApiKey() ? mcpConnectionsForTask(task) : [];
+  const fileSkillForRouting = detectFileSkill(task);
+
+  // Hybrid routing: subscription handles plain text and LibreOffice file
+  // tasks (zero credits); API credits are reserved for MCP-connected work.
+  const preferSubscription =
+    sub &&
+    (EXECUTOR === 'subscription' ||
+      (mcps.length === 0 && (!fileSkillForRouting || sofficeAvailable() || !hasApiKey())));
+
+  if (preferSubscription) {
+    try {
+      return await runSubscriptionPipeline(task, context, fileSkillForRouting);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!hasApiKey()) {
+        const fallback = simulate(task, context);
+        return {
+          ...fallback,
+          importantUpdate: `Subscription run failed (${msg.slice(0, 140)}). Fell back to simulation mode so the flow completes.`,
+        };
+      }
+      // fall through to the API path below, noting the switch
+      const apiResult = await executeViaApi(task, context, mcps);
+      return {
+        ...apiResult,
+        importantUpdate: `Subscription run failed (${msg.slice(0, 120)}) — completed on API credits instead. ${apiResult.importantUpdate ?? ''}`,
+      };
+    }
+  }
+
+  return executeViaApi(task, context, mcps);
+}
+
+async function executeViaApi(
+  task: Task,
+  context: string,
+  mcps: McpConnection[],
+): Promise<ExecutionResult> {
   const runWith = async (connections: McpConnection[]): Promise<ExecutionResult> => {
     const usage = emptyUsage();
     let attempt = await runAttempt(task, context, connections);
@@ -380,6 +555,7 @@ export async function executeTask(task: Task, context: string): Promise<Executio
       simulated: false,
       model: MODEL,
       usage,
+      billedUsd: costUsd(MODEL, usage),
       iterations,
       outcome,
     };

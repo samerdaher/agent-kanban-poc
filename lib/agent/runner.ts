@@ -10,7 +10,7 @@ import {
   recordRun,
 } from '../store';
 import { Task, BlockedKind } from '../types';
-import { executeTask, costUsd } from './claude';
+import { executeTask } from './claude';
 import { distillLesson } from './lessons';
 import { notifySlack } from '../notify';
 
@@ -194,7 +194,7 @@ async function runPipeline(taskId: string) {
     outputTokens: result.usage.output,
     cacheReadTokens: result.usage.cacheRead,
     cacheWriteTokens: result.usage.cacheWrite,
-    costUsd: result.simulated ? 0 : costUsd(result.model, result.usage),
+    costUsd: result.billedUsd,
     durationMs: Date.now() - startedAt,
     iterations: result.iterations,
     outcome: result.outcome,
