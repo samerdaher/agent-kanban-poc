@@ -463,23 +463,80 @@ function simulate(task: Task, context: string): ExecutionResult {
 
 /* ------------------------------ orchestration -------------------------- */
 
+/**
+ * When both executors could handle a plain task, ask Claude (on the
+ * subscription — the call itself is $0) which one fits better.
+ */
+async function routeDecision(task: Task): Promise<{ executor: 'api' | 'subscription'; reason: string }> {
+  try {
+    const res = await subscriptionText(
+      'You route tasks between two executors and reply with ONLY JSON: {"executor": "subscription" | "api", "reason": "<max 15 words>"}.\n' +
+        '- "subscription": included in a Claude subscription ($0). Right for everyday content, drafts, summaries, analysis, internal docs.\n' +
+        '- "api": pay-per-token claude-opus-4-8 with maximum reasoning quality. Right for genuinely complex, high-stakes, external-facing, or precision-critical work.\n' +
+        'Prefer "subscription" unless the task clearly benefits from the stronger model.',
+      `Task: ${task.title}\n${task.description.slice(0, 400)}${task.definitionOfDone ? `\nDefinition of done: ${task.definitionOfDone.slice(0, 200)}` : ''}`,
+    );
+    const match = res.text.match(/\{[\s\S]*\}/);
+    if (match) {
+      const j = JSON.parse(match[0]);
+      if (j.executor === 'api' || j.executor === 'subscription') {
+        return { executor: j.executor, reason: String(j.reason || '').slice(0, 120) };
+      }
+    }
+  } catch {
+    /* router unavailable */
+  }
+  return { executor: 'subscription', reason: 'router unavailable — defaulted to subscription' };
+}
+
 export async function executeTask(task: Task, context: string): Promise<ExecutionResult> {
   const sub = subscriptionEnabled();
   if (!hasApiKey() && !sub) return simulate(task, context);
 
   const mcps = hasApiKey() ? mcpConnectionsForTask(task) : [];
   const fileSkillForRouting = detectFileSkill(task);
+  const choice = task.executor || 'auto';
 
-  // Hybrid routing: subscription handles plain text and LibreOffice file
-  // tasks (zero credits); API credits are reserved for MCP-connected work.
-  const preferSubscription =
-    sub &&
-    (EXECUTOR === 'subscription' ||
-      (mcps.length === 0 && (!fileSkillForRouting || sofficeAvailable() || !hasApiKey())));
+  let preferSubscription: boolean;
+  let routeNote = '';
+
+  if (choice === 'api' && hasApiKey()) {
+    preferSubscription = false;
+    routeNote = 'Executor pinned to API by the task.';
+  } else if (choice === 'subscription' && sub) {
+    preferSubscription = true;
+    routeNote = mcps.length
+      ? 'Executor pinned to subscription by the task — note: MCP tools are unavailable on this path.'
+      : 'Executor pinned to subscription by the task.';
+  } else if (!sub) {
+    preferSubscription = false;
+  } else if (EXECUTOR === 'subscription') {
+    preferSubscription = true;
+  } else {
+    // auto: deterministic rules first, Claude router only for the gray zone
+    if (mcps.length) {
+      preferSubscription = false;
+      routeNote = 'Auto-routed to API: task requires MCP tools.';
+    } else if (fileSkillForRouting) {
+      preferSubscription = sofficeAvailable() || !hasApiKey();
+      routeNote = preferSubscription
+        ? 'Auto-routed to subscription: file deliverable generated locally with LibreOffice.'
+        : 'Auto-routed to API: file deliverable (LibreOffice not available locally).';
+    } else if (!hasApiKey()) {
+      preferSubscription = true;
+    } else {
+      const decision = await routeDecision(task);
+      preferSubscription = decision.executor === 'subscription';
+      routeNote = `Auto-routed to ${decision.executor} by Claude: ${decision.reason}`;
+    }
+  }
+
+  const withNote = (r: ExecutionResult): ExecutionResult =>
+    routeNote ? { ...r, importantUpdate: `${routeNote} ${r.importantUpdate ?? ''}`.trim() } : r;
 
   if (preferSubscription) {
     try {
-      return await runSubscriptionPipeline(task, context, fileSkillForRouting);
+      return withNote(await runSubscriptionPipeline(task, context, fileSkillForRouting));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!hasApiKey()) {
@@ -498,7 +555,7 @@ export async function executeTask(task: Task, context: string): Promise<Executio
     }
   }
 
-  return executeViaApi(task, context, mcps);
+  return withNote(await executeViaApi(task, context, mcps));
 }
 
 async function executeViaApi(

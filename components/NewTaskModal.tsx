@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Task, Resource, TaskType } from '@/lib/types';
+import { Task, Resource, TaskType, TaskExecutor } from '@/lib/types';
 
 export default function NewTaskModal({
   workspaceId,
@@ -24,6 +24,7 @@ export default function NewTaskModal({
   const [deps, setDeps] = useState<string[]>([]);
   const [askHuman, setAskHuman] = useState(false);
   const [definitionOfDone, setDefinitionOfDone] = useState('');
+  const [executor, setExecutor] = useState<TaskExecutor>('auto');
   const [toSprint, setToSprint] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -45,6 +46,7 @@ export default function NewTaskModal({
         dependencies: deps,
         askHuman,
         definitionOfDone: definitionOfDone.trim() || undefined,
+        executor,
       }),
     });
     setBusy(false);
@@ -88,6 +90,21 @@ export default function NewTaskModal({
           <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="backend, billing (comma-separated)" />
           <div className="help">Tags also power context matching against completed tasks.</div>
         </div>
+
+        {type === 'agent' && (
+          <div className="field">
+            <label>Runs on</label>
+            <select value={executor} onChange={(e) => setExecutor(e.target.value as TaskExecutor)}>
+              <option value="auto">🧭 Auto — Claude picks the best fit (recommended)</option>
+              <option value="subscription">💳 Claude subscription — $0 credits</option>
+              <option value="api">⚡ API credits — pinned claude-opus-4-8</option>
+            </select>
+            <div className="help">
+              Auto: MCP tasks → API; files → LibreOffice on the subscription; everything else Claude decides
+              (the decision + reason land in the activity feed).
+            </div>
+          </div>
+        )}
 
         {type === 'agent' && (
           <div className="field">

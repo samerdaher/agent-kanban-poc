@@ -1,5 +1,7 @@
 export type TaskType = 'agent' | 'human';
 
+export type TaskExecutor = 'auto' | 'api' | 'subscription';
+
 export type TaskStatus =
   | 'backlog'
   | 'sprint'
@@ -66,6 +68,8 @@ export interface Task {
   attachments: TaskAttachment[];
   /** acceptance criteria — when set, the run is graded against it and revised until it passes */
   definitionOfDone: string | null;
+  /** where this task executes: forced 'api' / 'subscription', or 'auto' (rules + Claude router) */
+  executor: TaskExecutor;
   /** execution runs with token usage & cost (populated on reads) */
   runs?: TaskRun[];
   createdBy: string | null;

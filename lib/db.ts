@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   output TEXT,
   created_by TEXT,
   attachments TEXT NOT NULL DEFAULT '[]',
+  executor TEXT NOT NULL DEFAULT 'auto',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT
@@ -126,6 +127,9 @@ function migrateColumns(d: DatabaseSync) {
   }
   if (!taskCols.includes('definition_of_done')) {
     d.exec('ALTER TABLE tasks ADD COLUMN definition_of_done TEXT');
+  }
+  if (!taskCols.includes('executor')) {
+    d.exec("ALTER TABLE tasks ADD COLUMN executor TEXT NOT NULL DEFAULT 'auto'");
   }
 }
 

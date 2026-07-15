@@ -36,6 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ wid
         typeof body.definitionOfDone === 'string' && body.definitionOfDone.trim()
           ? body.definitionOfDone.trim()
           : null,
+      executor: ['auto', 'api', 'subscription'].includes(body.executor) ? body.executor : 'auto',
     },
     auth.user.id,
   );

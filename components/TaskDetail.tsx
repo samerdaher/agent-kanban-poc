@@ -87,6 +87,11 @@ export default function TaskDetail({
                 {t}
               </span>
             ))}
+            {task.type === 'agent' && task.executor && task.executor !== 'auto' && (
+              <span className="chip req" title="Execution pinned by the task">
+                {task.executor === 'subscription' ? '💳 subscription' : '⚡ api'}
+              </span>
+            )}
           </div>
           <div className="task-id-row">
             ID: <code>{task.id}</code>

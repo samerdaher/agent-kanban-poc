@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
       dependencies: [],
       askHuman: Boolean(body.askHuman),
       definitionOfDone: typeof body.definitionOfDone === 'string' && body.definitionOfDone ? body.definitionOfDone : null,
+      executor: ['auto', 'api', 'subscription'].includes(body.executor) ? body.executor : 'auto',
     },
     null,
   );

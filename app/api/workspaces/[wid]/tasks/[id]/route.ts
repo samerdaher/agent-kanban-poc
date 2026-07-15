@@ -89,6 +89,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     task.definitionOfDone = body.definitionOfDone.trim() || null;
     fieldsChanged = true;
   }
+  if (['auto', 'api', 'subscription'].includes(body.executor)) {
+    task.executor = body.executor;
+    fieldsChanged = true;
+  }
   if (fieldsChanged) saveTask(task);
 
   reconcileBlocked(wid);
