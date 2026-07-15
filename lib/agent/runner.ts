@@ -333,3 +333,24 @@ export function answerQuestion(
   }
   return getTask(taskId);
 }
+
+/**
+ * Re-execute a finished task with new instructions. The instructions are
+ * recorded as an answer-kind update, so revision mode injects them together
+ * with the previous output — the agent builds on the prior work instead of
+ * starting over. The instructions also feed workspace memory.
+ */
+export function rerunTask(taskId: string, instructions: string, actor: string): Task | undefined {
+  const task = getTask(taskId);
+  if (!task) return undefined;
+  addUpdate(task, 'answer', `Re-run requested: ${instructions}`, actor);
+  void distillLesson(task, 'correction', instructions);
+  task.status = 'sprint';
+  task.blocked = null;
+  task.pendingQuestion = null;
+  task.completedAt = null;
+  saveTask(task);
+  addUpdate(task, 'status', 'Re-queued for re-execution with new instructions.', 'system');
+  triggerAgents(task.workspaceId);
+  return getTask(taskId);
+}

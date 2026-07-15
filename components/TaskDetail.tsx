@@ -29,6 +29,8 @@ export default function TaskDetail({
   const [answer, setAnswer] = useState('');
   const [busy, setBusy] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+  const [showRerun, setShowRerun] = useState(false);
+  const [rerunText, setRerunText] = useState('');
 
   const depTitles = task.dependencies
     .map((id) => allTasks.find((t) => t.id === id))
@@ -67,6 +69,26 @@ export default function TaskDetail({
 
   const fileUrl = (name: string) =>
     `/api/workspaces/${workspaceId}/tasks/${task.id}/files/${encodeURIComponent(name)}`;
+
+  async function rerun() {
+    if (!rerunText.trim()) return;
+    setBusy(true);
+    const res = await fetch(`/api/workspaces/${workspaceId}/tasks/${task.id}/rerun`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions: rerunText.trim() }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || 'Could not re-run the task.');
+    }
+    setRerunText('');
+    setShowRerun(false);
+    setBusy(false);
+    onChanged();
+  }
+
+  const canRerun = task.type === 'agent' && ['completed', 'archived', 'blocked'].includes(task.status);
 
   return (
     <>
@@ -266,6 +288,39 @@ export default function TaskDetail({
               {task.updates.length === 0 && <p className="desc">No activity yet.</p>}
             </div>
           </div>
+
+          {canRerun && (
+            <div className="section">
+              {!showRerun ? (
+                <button className="btn" onClick={() => setShowRerun(true)}>
+                  ↺ Re-run with instructions
+                </button>
+              ) : (
+                <div className="question-box">
+                  <p>
+                    <strong>↺ Re-run:</strong> the agent will build on the previous output — tell it what to
+                    change or add. Your instructions also become a workspace lesson.
+                  </p>
+                  <textarea
+                    className="answer-textarea"
+                    placeholder="e.g. Make it more formal, add a pricing section, target CTOs instead."
+                    value={rerunText}
+                    onChange={(e) => setRerunText(e.target.value)}
+                    rows={3}
+                    autoFocus
+                  />
+                  <div className="answer-row" style={{ marginTop: 8 }}>
+                    <button className="btn primary" disabled={busy || !rerunText.trim()} onClick={rerun}>
+                      Re-execute
+                    </button>
+                    <button className="btn" disabled={busy} onClick={() => setShowRerun(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="section">
             <button className="btn small danger" onClick={remove}>

@@ -256,6 +256,35 @@ test('webhook auth is enforced', async () => {
   assert.equal(none.status, 401);
 });
 
+test('re-run with instructions builds on the previous output', async () => {
+  const { data } = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Rerun probe',
+    type: 'agent',
+    status: 'sprint',
+  });
+  const id = data.task.id;
+  let task = await waitForStatus(wid, id, ['completed']);
+  assert.equal(task.runs.length, 1);
+
+  const rr = await api('POST', `/api/workspaces/${wid}/tasks/${id}/rerun`, {
+    instructions: 'Add a summary section at the top.',
+  });
+  assert.equal(rr.status, 200);
+  task = await waitForStatus(wid, id, ['completed']);
+  assert.ok(task.runs.length >= 2);
+  assert.ok(task.updates.some((u) => u.kind === 'answer' && u.text.startsWith('Re-run requested:')));
+  assert.ok(task.updates.some((u) => u.kind === 'context' && /revision mode/.test(u.text)));
+
+  // instructions without text are rejected; human tasks cannot re-run
+  const bad = await api('POST', `/api/workspaces/${wid}/tasks/${id}/rerun`, { instructions: '' });
+  assert.equal(bad.status, 400);
+  const human = await api('POST', `/api/workspaces/${wid}/tasks`, { title: 'Human rerun probe', type: 'human' });
+  const noHuman = await api('POST', `/api/workspaces/${wid}/tasks/${human.data.task.id}/rerun`, {
+    instructions: 'x',
+  });
+  assert.equal(noHuman.status, 400);
+});
+
 test('archive and delete lifecycle', async () => {
   const t = await api('POST', `/api/workspaces/${wid}/tasks`, { title: 'To archive', type: 'human' });
   const id = t.data.task.id;
