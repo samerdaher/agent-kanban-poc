@@ -335,6 +335,77 @@ test('inbox lists review requests and assigned human tasks', async () => {
   assert.ok(!afterIds.includes(human.data.task.id) && !afterIds.includes(review.data.task.id));
 });
 
+test('dependency cycles are rejected', async () => {
+  const a = await api('POST', `/api/workspaces/${wid}/tasks`, { title: 'Cycle A', type: 'human' });
+  const b = await api('POST', `/api/workspaces/${wid}/tasks`, { title: 'Cycle B', type: 'human' });
+  const ok = await api('PATCH', `/api/workspaces/${wid}/tasks/${a.data.task.id}`, {
+    dependencies: [b.data.task.id],
+  });
+  assert.equal(ok.status, 200);
+  const cyc = await api('PATCH', `/api/workspaces/${wid}/tasks/${b.data.task.id}`, {
+    dependencies: [a.data.task.id],
+  });
+  assert.equal(cyc.status, 400);
+  assert.match(cyc.data.error, /cycle/i);
+});
+
+test('informs edges inject linked output into context', async () => {
+  const src = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Informs source',
+    type: 'agent',
+    status: 'sprint',
+  });
+  await waitForStatus(wid, src.data.task.id, ['completed']);
+  const dst = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Informs consumer',
+    type: 'agent',
+    status: 'sprint',
+    informs: [src.data.task.id],
+  });
+  const task = await waitForStatus(wid, dst.data.task.id, ['completed']);
+  assert.deepEqual(task.informs, [src.data.task.id]);
+  assert.ok(task.updates.some((u) => u.kind === 'context' && /linked output/.test(u.text)));
+});
+
+test('epic: plan → approve → children → digest', async () => {
+  const epic = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Epic: launch the newsletter',
+    description: 'Set up and launch a weekly newsletter.',
+    type: 'epic',
+    status: 'sprint',
+  });
+  const id = epic.data.task.id;
+
+  // planning phase → blocked with a proposed plan
+  let task = await waitForStatus(wid, id, ['blocked']);
+  assert.ok(Array.isArray(task.plan) && task.plan.length >= 2, 'plan proposed');
+  assert.ok(task.pendingQuestion);
+
+  // approve → children created, epic tracks them as dependencies
+  const ap = await api('POST', `/api/workspaces/${wid}/tasks/${id}/approve-plan`, {});
+  assert.equal(ap.status, 200);
+  assert.equal(ap.data.task.dependencies.length, task.plan.length);
+
+  // agent children complete on their own (simulation); finish human children
+  const deadline = Date.now() + 40000;
+  for (;;) {
+    const all = (await api('GET', `/api/workspaces/${wid}/tasks`)).data.tasks;
+    const children = all.filter((t) => ap.data.task.dependencies.includes(t.id));
+    for (const c of children) {
+      if (c.type === 'human' && c.status !== 'completed') {
+        await api('PATCH', `/api/workspaces/${wid}/tasks/${c.id}`, { status: 'completed' });
+      }
+    }
+    if (children.every((c) => c.status === 'completed')) break;
+    if (Date.now() > deadline) throw new Error('children never completed');
+    await sleep(600);
+  }
+
+  // epic auto-resumes and digests
+  task = await waitForStatus(wid, id, ['completed'], 40000);
+  assert.match(task.output, /Epic completed|subtask/i);
+});
+
 test('archive and delete lifecycle', async () => {
   const t = await api('POST', `/api/workspaces/${wid}/tasks`, { title: 'To archive', type: 'human' });
   const id = t.data.task.id;

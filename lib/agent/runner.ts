@@ -9,11 +9,14 @@ import {
   listTasksByStatus,
   recordRun,
   getUserById,
+  createTask,
+  setInforms,
 } from '../store';
 import { Task, BlockedKind } from '../types';
 import { executeTask } from './claude';
 import { distillLesson } from './lessons';
 import { extractImpactHeuristic, enrichImpact } from './impact';
+import { generateEpicPlan, generateEpicDigest, renderPlanMarkdown } from './planner';
 import { notifySlack } from '../notify';
 
 /**
@@ -62,6 +65,16 @@ function buildContext(task: Task): { summary: string; note: string } {
     return n;
   };
 
+  // 0 — linked outputs (informs edges): explicit, always injected
+  const linked = task.informs
+    .map((id) => getTask(id))
+    .filter((t): t is Task => Boolean(t && t.output));
+  const linkedBlock = linked.length
+    ? `# Linked task outputs — this task explicitly builds on them\n${linked
+        .map((t) => `From “${t.title}”:\n${(t.output || '').slice(0, 1200)}`)
+        .join('\n\n---\n\n')}`
+    : '';
+
   // 1 — similar completed outputs
   const similar = listTasks(task.workspaceId)
     .filter((t) => t.id !== task.id && t.status === 'completed' && t.output)
@@ -104,8 +117,9 @@ function buildContext(task: Task): { summary: string; note: string } {
         .join('\n\n')
     : '';
 
-  const summary = [similarBlock, lessonBlock, revisionBlock].filter(Boolean).join('\n\n---\n\n');
+  const summary = [linkedBlock, similarBlock, lessonBlock, revisionBlock].filter(Boolean).join('\n\n---\n\n');
   const parts = [
+    linked.length ? `${linked.length} linked output${linked.length > 1 ? 's' : ''}` : '',
     similar.length ? `${similar.length} similar output${similar.length > 1 ? 's' : ''}` : '',
     picked.length ? `${picked.length} workspace lesson${picked.length > 1 ? 's' : ''}` : '',
     isRerun ? 'previous-attempt history (revision mode)' : '',
@@ -138,6 +152,7 @@ function block(task: Task, kind: BlockedKind, detail: string, refs: string[]) {
 async function runPipeline(taskId: string) {
   const task = getTask(taskId);
   if (!task || task.status !== 'sprint') return;
+  if (task.type === 'epic') return runEpicPipeline(task);
 
   // ---- Gate 1: dependencies -------------------------------------------
   const deps = unmetDependencies(task);
@@ -225,6 +240,96 @@ async function runPipeline(taskId: string) {
   }
 
   finish(t2);
+}
+
+/**
+ * Epics have two phases: (1) planning — decompose the goal into a subtask
+ * plan and wait for human approval; (2) after the approved children complete
+ * (tracked as blocks-dependencies), digest their outputs and finish.
+ */
+async function runEpicPipeline(task: Task) {
+  if (task.plan && task.dependencies.length) {
+    const deps = unmetDependencies(task);
+    if (deps.length) {
+      block(
+        task,
+        'dependency',
+        `Epic waiting on ${deps.length} subtask${deps.length > 1 ? 's' : ''}: ${deps.map((d) => `“${d.title}”`).join(', ')}.`,
+        deps.map((d) => d.id),
+      );
+      return;
+    }
+    // all children complete → digest
+    task.status = 'executing';
+    saveTask(task);
+    addUpdate(task, 'status', 'All subtasks complete — composing the epic summary.');
+    const children = task.dependencies.map((id) => getTask(id)).filter((t): t is Task => Boolean(t));
+    const fresh = getTask(task.id);
+    if (!fresh || fresh.status !== 'executing') return;
+    fresh.output = await generateEpicDigest(fresh, children);
+    saveTask(fresh);
+    finish(fresh);
+    return;
+  }
+
+  // planning phase
+  task.status = 'building_context';
+  task.blocked = null;
+  saveTask(task);
+  addUpdate(task, 'status', 'Planning the epic — decomposing the goal into subtasks…');
+  const ctx = buildContext(task);
+  task.status = 'executing';
+  saveTask(task);
+  const plan = await generateEpicPlan(task, ctx.summary);
+  const fresh = getTask(task.id);
+  if (!fresh || fresh.status !== 'executing') return;
+  fresh.plan = plan;
+  fresh.output = renderPlanMarkdown(plan);
+  fresh.pendingQuestion = `Proposed plan with ${plan.length} subtasks — approve to create them, or request changes.`;
+  saveTask(fresh);
+  addUpdate(fresh, 'question', fresh.pendingQuestion);
+  block(fresh, 'human_question', 'Waiting for plan approval.', []);
+}
+
+/** Approve an epic's plan: create the subtasks with their edges, then track them. */
+export function approvePlan(taskId: string, actor: string): Task | undefined {
+  const task = getTask(taskId);
+  if (!task || task.type !== 'epic' || !task.plan || task.dependencies.length) return task;
+
+  const created: Task[] = [];
+  for (const item of task.plan) {
+    created.push(
+      createTask(
+        task.workspaceId,
+        {
+          title: item.title,
+          description: item.description,
+          type: item.type,
+          status: 'sprint', // dependency gates sequence them automatically
+          definitionOfDone: item.definitionOfDone || null,
+          askHuman: Boolean(item.askHuman),
+          tags: ['epic'],
+        },
+        task.createdBy,
+      ),
+    );
+  }
+  task.plan.forEach((item, i) => {
+    if (item.dependsOn.length) {
+      created[i].dependencies = item.dependsOn.map((j) => created[j].id);
+      saveTask(created[i]);
+    }
+    if (item.informs?.length) setInforms(created[i].id, item.informs.map((j) => created[j].id));
+  });
+
+  task.dependencies = created.map((c) => c.id);
+  task.pendingQuestion = null;
+  task.blocked = null;
+  task.status = 'sprint';
+  saveTask(task);
+  addUpdate(task, 'status', `Plan approved by ${actor} — ${created.length} subtasks created.`, actor);
+  triggerAgents(task.workspaceId);
+  return getTask(taskId);
 }
 
 function finish(task: Task) {
@@ -334,6 +439,12 @@ export function answerQuestion(
     addUpdate(task, 'status', 'Human requested changes — task re-queued for revision.', 'system');
     triggerAgents(task.workspaceId);
     return getTask(taskId);
+  }
+
+  // approving an epic's plan question creates the subtasks instead of finishing
+  if (task.type === 'epic' && task.plan && !task.dependencies.length) {
+    addUpdate(task, 'answer', answer || 'Plan approved.', actor);
+    return approvePlan(taskId, actor);
   }
 
   addUpdate(task, 'answer', answer || 'Approved.', actor);

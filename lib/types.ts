@@ -1,4 +1,15 @@
-export type TaskType = 'agent' | 'human';
+export type TaskType = 'agent' | 'human' | 'epic';
+
+/** One proposed subtask inside an epic's plan (indices refer to plan order). */
+export interface EpicPlanItem {
+  title: string;
+  description: string;
+  type: 'agent' | 'human';
+  definitionOfDone?: string;
+  askHuman?: boolean;
+  dependsOn: number[];
+  informs?: number[];
+}
 
 export type TaskExecutor = 'auto' | 'api' | 'subscription';
 
@@ -56,8 +67,10 @@ export interface Task {
   tags: string[];
   /** resource names (MCPs / credentials) this task needs before an agent can run it */
   requirements: string[];
-  /** task ids that must be completed first */
+  /** task ids that must be completed first (blocks edges) */
   dependencies: string[];
+  /** task ids whose outputs are injected as context (informs edges, non-blocking) */
+  informs: string[];
   /** agent must confirm with a human before completing */
   askHuman: boolean;
   blocked: BlockedInfo | null;
@@ -72,6 +85,8 @@ export interface Task {
   executor: TaskExecutor;
   /** development impact manifest extracted from the run (null when nothing was touched) */
   impact: TaskImpact | null;
+  /** epics: the approved/proposed decomposition plan */
+  plan: EpicPlanItem[] | null;
   /** human tasks: who works it */
   assigneeUserId: string | null;
   /** agent tasks with the review gate: whose approval is requested */

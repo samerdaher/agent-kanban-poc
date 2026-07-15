@@ -29,6 +29,7 @@ export default function NewTaskModal({
   const [executor, setExecutor] = useState<TaskExecutor>('auto');
   const [assigneeUserId, setAssigneeUserId] = useState('');
   const [reviewerUserId, setReviewerUserId] = useState('');
+  const [informs, setInformsIds] = useState<string[]>([]);
   const [toSprint, setToSprint] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -48,6 +49,7 @@ export default function NewTaskModal({
         tags: tags.split(',').map((s) => s.trim()).filter(Boolean),
         requirements: requirements.split(',').map((s) => s.trim()).filter(Boolean),
         dependencies: deps,
+        informs,
         askHuman,
         definitionOfDone: definitionOfDone.trim() || undefined,
         executor,
@@ -74,6 +76,9 @@ export default function NewTaskModal({
             <button className={type === 'human' ? 'sel-human' : ''} onClick={() => setType('human')}>
               👤 Human
             </button>
+            <button className={type === 'epic' ? 'sel-agent' : ''} onClick={() => setType('epic')}>
+              🧩 Epic
+            </button>
           </div>
         </div>
 
@@ -87,7 +92,13 @@ export default function NewTaskModal({
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder={type === 'agent' ? 'The more specific the brief, the better the agent output.' : 'Notes for the human assignee.'}
+            placeholder={
+              type === 'epic'
+                ? 'Describe the goal — the agent proposes a subtask plan for your approval.'
+                : type === 'agent'
+                  ? 'The more specific the brief, the better the agent output.'
+                  : 'Notes for the human assignee.'
+            }
           />
         </div>
 
@@ -140,6 +151,30 @@ export default function NewTaskModal({
               Available now: {resources.map((r) => r.name).join(', ') || 'none'}. Missing ones move the task to Blocked
               until added.
             </div>
+          </div>
+        )}
+
+        {type === 'agent' && tasks.some((t) => t.output) && (
+          <div className="field">
+            <label>Uses output of (context link, non-blocking)</label>
+            <div className="dep-list">
+              {tasks
+                .filter((t) => t.output)
+                .slice(0, 20)
+                .map((t) => (
+                  <label key={t.id}>
+                    <input
+                      type="checkbox"
+                      checked={informs.includes(t.id)}
+                      onChange={(e) =>
+                        setInformsIds((d) => (e.target.checked ? [...d, t.id] : d.filter((x) => x !== t.id)))
+                      }
+                    />
+                    {t.title} <span style={{ color: 'var(--text-faint)' }}>({t.status})</span>
+                  </label>
+                ))}
+            </div>
+            <div className="help">The linked task&apos;s output is injected into this task&apos;s context.</div>
           </div>
         )}
 

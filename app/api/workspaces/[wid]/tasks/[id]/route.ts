@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireMember } from '@/lib/auth';
-import { getTask, saveTask, addUpdate, deleteTask, listRuns } from '@/lib/store';
+import {
+  getTask,
+  saveTask,
+  addUpdate,
+  deleteTask,
+  listRuns,
+  setInforms,
+  wouldCreateDependencyCycle,
+} from '@/lib/store';
 import { triggerAgents, reconcileBlocked } from '@/lib/agent/runner';
 import { TaskStatus } from '@/lib/types';
 
@@ -82,7 +90,18 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     fieldsChanged = true;
   }
   if (Array.isArray(body.dependencies)) {
-    task.dependencies = body.dependencies.map(String);
+    const deps = body.dependencies.map(String);
+    if (wouldCreateDependencyCycle(id, deps)) {
+      return NextResponse.json(
+        { error: 'These dependencies would create a cycle — both tasks would block each other forever.' },
+        { status: 400 },
+      );
+    }
+    task.dependencies = deps;
+    fieldsChanged = true;
+  }
+  if (Array.isArray(body.informs)) {
+    setInforms(id, body.informs.map(String));
     fieldsChanged = true;
   }
   if (typeof body.definitionOfDone === 'string') {

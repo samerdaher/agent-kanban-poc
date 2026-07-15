@@ -25,12 +25,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ wid
     {
       title: String(body.title),
       description: String(body.description || ''),
-      type: body.type === 'human' ? 'human' : 'agent',
+      type: body.type === 'human' ? 'human' : body.type === 'epic' ? 'epic' : 'agent',
       status: body.status === 'sprint' ? 'sprint' : 'backlog',
       priority: ['low', 'medium', 'high'].includes(body.priority) ? body.priority : 'medium',
       tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
       requirements: Array.isArray(body.requirements) ? body.requirements.map(String) : [],
       dependencies: Array.isArray(body.dependencies) ? body.dependencies.map(String) : [],
+      informs: Array.isArray(body.informs) ? body.informs.map(String) : [],
       askHuman: Boolean(body.askHuman),
       definitionOfDone:
         typeof body.definitionOfDone === 'string' && body.definitionOfDone.trim()

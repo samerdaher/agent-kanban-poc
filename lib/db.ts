@@ -138,6 +138,15 @@ function migrateColumns(d: DatabaseSync) {
     d.exec('ALTER TABLE tasks ADD COLUMN assignee_user_id TEXT');
     d.exec('ALTER TABLE tasks ADD COLUMN reviewer_user_id TEXT');
   }
+  if (!taskCols.includes('plan')) {
+    d.exec('ALTER TABLE tasks ADD COLUMN plan TEXT');
+  }
+  d.exec(`CREATE TABLE IF NOT EXISTS task_edges (
+    from_id TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'informs',
+    PRIMARY KEY (from_id, to_id, kind)
+  )`);
 }
 
 export function db(): DatabaseSync {

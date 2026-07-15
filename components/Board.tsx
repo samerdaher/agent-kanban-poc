@@ -143,7 +143,9 @@ function Card({
       )}
       <div className="title">{task.title}</div>
       <div className="meta">
-        <span className={`chip ${task.type}`}>{task.type === 'agent' ? '🤖 Agent-ready' : '👤 Human'}</span>
+        <span className={`chip ${task.type === 'epic' ? 'agent' : task.type}`}>
+          {task.type === 'epic' ? '🧩 Epic' : task.type === 'agent' ? '🤖 Agent-ready' : '👤 Human'}
+        </span>
         {task.tags.slice(0, 2).map((tag) => (
           <span key={tag} className="chip tag">
             {tag}

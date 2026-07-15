@@ -177,6 +177,7 @@ function rowToTask(r: Record<string, unknown>, updates: TaskUpdate[]): Task {
     tags: JSON.parse(r.tags as string),
     requirements: JSON.parse(r.requirements as string),
     dependencies: JSON.parse(r.dependencies as string),
+    informs: loadInforms(r.id as string),
     askHuman: Boolean(r.ask_human),
     blocked: r.blocked ? JSON.parse(r.blocked as string) : null,
     pendingQuestion: (r.pending_question as string) ?? null,
@@ -186,6 +187,7 @@ function rowToTask(r: Record<string, unknown>, updates: TaskUpdate[]): Task {
     definitionOfDone: (r.definition_of_done as string) ?? null,
     executor: ((r.executor as string) || 'auto') as Task['executor'],
     impact: r.impact ? JSON.parse(r.impact as string) : null,
+    plan: r.plan ? JSON.parse(r.plan as string) : null,
     assigneeUserId: (r.assignee_user_id as string) ?? null,
     reviewerUserId: (r.reviewer_user_id as string) ?? null,
     createdBy: (r.created_by as string) ?? null,
@@ -193,6 +195,38 @@ function rowToTask(r: Record<string, unknown>, updates: TaskUpdate[]): Task {
     updatedAt: r.updated_at as string,
     completedAt: (r.completed_at as string) ?? null,
   };
+}
+
+/* ------------------------- informs edges ------------------------------- */
+
+function loadInforms(taskId: string): string[] {
+  const rows = db()
+    .prepare("SELECT from_id FROM task_edges WHERE to_id = ? AND kind = 'informs'")
+    .all(taskId) as { from_id: string }[];
+  return rows.map((r) => r.from_id);
+}
+
+export function setInforms(taskId: string, fromIds: string[]) {
+  db().prepare("DELETE FROM task_edges WHERE to_id = ? AND kind = 'informs'").run(taskId);
+  const ins = db().prepare("INSERT OR IGNORE INTO task_edges (from_id, to_id, kind) VALUES (?, ?, 'informs')");
+  for (const f of new Set(fromIds)) if (f !== taskId) ins.run(f, taskId);
+}
+
+/** Would adding these blocks-dependencies to task create a cycle (deadlock)? */
+export function wouldCreateDependencyCycle(taskId: string, newDeps: string[]): boolean {
+  const visited = new Set<string>();
+  const stack = [...newDeps];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (id === taskId) return true;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const row = db().prepare('SELECT dependencies FROM tasks WHERE id = ?').get(id) as
+      | { dependencies: string }
+      | undefined;
+    if (row) stack.push(...(JSON.parse(row.dependencies) as string[]));
+  }
+  return false;
 }
 
 function loadUpdates(taskId: string): TaskUpdate[] {
@@ -226,9 +260,9 @@ export function getTask(id: string): Task | undefined {
   return row ? rowToTask(row, loadUpdates(id)) : undefined;
 }
 
-/** Agent-ready tasks sitting in Sprint — the runner's pickup queue. */
+/** Agent-ready tasks (and epics) sitting in Sprint — the runner's pickup queue. */
 export function listSprintAgentTasks(workspaceId?: string): Task[] {
-  const sql = `SELECT * FROM tasks WHERE type = 'agent' AND status = 'sprint'
+  const sql = `SELECT * FROM tasks WHERE type IN ('agent', 'epic') AND status = 'sprint'
     ${workspaceId ? 'AND workspace_id = ?' : ''}
     ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, created_at`;
   const rows = (workspaceId ? db().prepare(sql).all(workspaceId) : db().prepare(sql).all()) as Record<
@@ -260,6 +294,7 @@ export function createTask(
     tags: [],
     requirements: [],
     dependencies: [],
+    informs: [],
     askHuman: false,
     blocked: null,
     pendingQuestion: null,
@@ -269,6 +304,7 @@ export function createTask(
     definitionOfDone: null,
     executor: 'auto',
     impact: null,
+    plan: null,
     assigneeUserId: null,
     reviewerUserId: null,
     createdBy,
@@ -281,9 +317,9 @@ export function createTask(
     .prepare(
       `INSERT INTO tasks (id, workspace_id, title, description, type, status, priority, tags,
         requirements, dependencies, ask_human, blocked, pending_question, output, attachments,
-        definition_of_done, executor, impact, assignee_user_id, reviewer_user_id,
+        definition_of_done, executor, impact, plan, assignee_user_id, reviewer_user_id,
         created_by, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       task.id,
@@ -304,6 +340,7 @@ export function createTask(
       task.definitionOfDone,
       task.executor,
       task.impact ? JSON.stringify(task.impact) : null,
+      task.plan ? JSON.stringify(task.plan) : null,
       task.assigneeUserId,
       task.reviewerUserId,
       task.createdBy,
@@ -311,6 +348,7 @@ export function createTask(
       task.updatedAt,
       task.completedAt,
     );
+  if (task.informs.length) setInforms(task.id, task.informs);
   publish(workspaceId);
   return task;
 }
@@ -322,7 +360,7 @@ export function saveTask(task: Task) {
     .prepare(
       `UPDATE tasks SET title = ?, description = ?, status = ?, priority = ?, tags = ?,
         requirements = ?, dependencies = ?, ask_human = ?, blocked = ?, pending_question = ?,
-        output = ?, attachments = ?, definition_of_done = ?, executor = ?, impact = ?,
+        output = ?, attachments = ?, definition_of_done = ?, executor = ?, impact = ?, plan = ?,
         assignee_user_id = ?, reviewer_user_id = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
     )
     .run(
@@ -341,6 +379,7 @@ export function saveTask(task: Task) {
       task.definitionOfDone,
       task.executor,
       task.impact ? JSON.stringify(task.impact) : null,
+      task.plan ? JSON.stringify(task.plan) : null,
       task.assigneeUserId,
       task.reviewerUserId,
       task.updatedAt,
@@ -365,6 +404,7 @@ export function deleteTask(id: string): boolean {
   const task = getTask(id);
   if (!task) return false;
   db().prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  db().prepare('DELETE FROM task_edges WHERE from_id = ? OR to_id = ?').run(id, id);
   publish(task.workspaceId);
   return true;
 }

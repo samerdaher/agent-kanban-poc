@@ -10,6 +10,7 @@ import MembersModal from '@/components/MembersModal';
 import LessonsModal from '@/components/LessonsModal';
 import ImpactModal from '@/components/ImpactModal';
 import InboxModal from '@/components/InboxModal';
+import GraphModal from '@/components/GraphModal';
 
 export default function WorkspaceApp({
   workspaceId,
@@ -29,6 +30,7 @@ export default function WorkspaceApp({
   const [showLessons, setShowLessons] = useState(false);
   const [showImpact, setShowImpact] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
+  const [showGraph, setShowGraph] = useState(false);
   const [inbox, setInbox] = useState<
     { id: string; title: string; status: string; kind: 'review' | 'assigned'; pendingQuestion: string | null; updatedAt: string }[]
   >([]);
@@ -144,6 +146,9 @@ export default function WorkspaceApp({
         <button className="btn" onClick={() => setShowInbox(true)}>
           📥 {inbox.length > 0 ? <strong style={{ color: 'var(--warn)' }}>{inbox.length}</strong> : '0'}
         </button>
+        <button className="btn" onClick={() => setShowGraph(true)}>
+          🕸
+        </button>
         <button className="btn" onClick={() => setShowImpact(true)}>
           🛠 Dev
         </button>
@@ -200,6 +205,7 @@ export default function WorkspaceApp({
       {showLessons && <LessonsModal workspaceId={workspaceId} onClose={() => setShowLessons(false)} />}
       {showImpact && <ImpactModal workspaceId={workspaceId} onClose={() => setShowImpact(false)} />}
       {showInbox && <InboxModal items={inbox} onOpenTask={setSelectedId} onClose={() => setShowInbox(false)} />}
+      {showGraph && <GraphModal tasks={tasks} onOpenTask={setSelectedId} onClose={() => setShowGraph(false)} />}
     </div>
   );
 }

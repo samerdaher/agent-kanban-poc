@@ -103,7 +103,15 @@ export default function TaskDetail({
           </div>
           <div className="status-line" style={{ marginTop: 8 }}>
             <span className={`status-badge st-${task.status}`}>{STATUS_LABEL[task.status]}</span>
-            <span className={`chip ${task.type}`}>{task.type === 'agent' ? '🤖 Agent-ready' : '👤 Human'}</span>
+            <span className={`chip ${task.type === 'epic' ? 'agent' : task.type}`}>
+              {task.type === 'epic' ? '🧩 Epic' : task.type === 'agent' ? '🤖 Agent-ready' : '👤 Human'}
+            </span>
+            {task.type === 'epic' && task.dependencies.length > 0 && (
+              <span className="chip tag">
+                {allTasks.filter((t) => task.dependencies.includes(t.id) && t.status === 'completed').length}/
+                {task.dependencies.length} subtasks done
+              </span>
+            )}
             {task.tags.map((t) => (
               <span key={t} className="chip tag">
                 {t}
@@ -139,7 +147,54 @@ export default function TaskDetail({
             </div>
           )}
 
-          {task.pendingQuestion && (
+          {task.type === 'epic' && task.plan && task.dependencies.length === 0 && task.pendingQuestion && (
+            <div className="section">
+              <h4>Proposed plan — review & approve</h4>
+              <div className="res-list">
+                {task.plan.map((p, i) => (
+                  <div className="res-item" key={i} style={{ alignItems: 'flex-start' }}>
+                    <span className={`kind ${p.type === 'human' ? 'credential' : 'mcp'}`}>
+                      {i + 1} · {p.type}
+                    </span>
+                    <span style={{ flex: 1, fontSize: 13 }}>
+                      <strong>{p.title}</strong>
+                      {p.dependsOn.length > 0 && (
+                        <span style={{ color: 'var(--text-faint)' }}> — after {p.dependsOn.map((d) => d + 1).join(', ')}</span>
+                      )}
+                      <span style={{ display: 'block', fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>
+                        {p.description}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="answer-row" style={{ marginTop: 10 }}>
+                <button
+                  className="btn primary"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    const res = await fetch(`/api/workspaces/${workspaceId}/tasks/${task.id}/approve-plan`, {
+                      method: 'POST',
+                    });
+                    if (!res.ok) {
+                      const d = await res.json().catch(() => ({}));
+                      alert(d.error || 'Could not approve the plan.');
+                    }
+                    setBusy(false);
+                    onChanged();
+                  }}
+                >
+                  ✓ Approve & create {task.plan.length} tasks
+                </button>
+                <button className="btn" disabled={busy} onClick={() => setShowRerun(true)}>
+                  ↺ Request a different plan
+                </button>
+              </div>
+            </div>
+          )}
+
+          {task.pendingQuestion && !(task.type === 'epic' && task.plan && task.dependencies.length === 0) && (
             <div className="section">
               <div className="question-box">
                 <p>
