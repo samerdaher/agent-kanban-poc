@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Task, Resource, User, Workspace } from '@/lib/types';
+import { Task, Resource, User, Workspace, Member } from '@/lib/types';
 import Board from '@/components/Board';
 import TaskDetail from '@/components/TaskDetail';
 import NewTaskModal from '@/components/NewTaskModal';
@@ -9,6 +9,7 @@ import ResourcesModal from '@/components/ResourcesModal';
 import MembersModal from '@/components/MembersModal';
 import LessonsModal from '@/components/LessonsModal';
 import ImpactModal from '@/components/ImpactModal';
+import InboxModal from '@/components/InboxModal';
 
 export default function WorkspaceApp({
   workspaceId,
@@ -27,6 +28,11 @@ export default function WorkspaceApp({
   const [showMembers, setShowMembers] = useState(false);
   const [showLessons, setShowLessons] = useState(false);
   const [showImpact, setShowImpact] = useState(false);
+  const [showInbox, setShowInbox] = useState(false);
+  const [inbox, setInbox] = useState<
+    { id: string; title: string; status: string; kind: 'review' | 'assigned'; pendingQuestion: string | null; updatedAt: string }[]
+  >([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [live, setLive] = useState(false);
   const [creatingWs, setCreatingWs] = useState(false);
   const [spend, setSpend] = useState<number | null>(null);
@@ -45,6 +51,10 @@ export default function WorkspaceApp({
         .then((r) => r.json())
         .then((d) => setSpend(typeof d.stats?.costUsd === 'number' ? d.stats.costUsd : null))
         .catch(() => {});
+      fetch(`/api/workspaces/${workspaceId}/inbox`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setInbox(d.items || []))
+        .catch(() => {});
     } catch {
       /* transient failure — SSE reconnect / fallback poll will retry */
     }
@@ -53,6 +63,13 @@ export default function WorkspaceApp({
   // Real-time: SSE stream drives refreshes; a slow poll is the safety net.
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
+  useEffect(() => {
+    fetch(`/api/workspaces/${workspaceId}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => setMembers(d.members || []))
+      .catch(() => {});
+  }, [workspaceId]);
+
   useEffect(() => {
     refresh();
     const es = new EventSource(`/api/workspaces/${workspaceId}/events`);
@@ -124,6 +141,9 @@ export default function WorkspaceApp({
           </span>
         )}
         <div className="spacer" />
+        <button className="btn" onClick={() => setShowInbox(true)}>
+          📥 {inbox.length > 0 ? <strong style={{ color: 'var(--warn)' }}>{inbox.length}</strong> : '0'}
+        </button>
         <button className="btn" onClick={() => setShowImpact(true)}>
           🛠 Dev
         </button>
@@ -160,6 +180,7 @@ export default function WorkspaceApp({
           workspaceId={workspaceId}
           tasks={tasks}
           resources={resources}
+          members={members}
           onClose={() => setShowNew(false)}
           onCreated={() => {
             setShowNew(false);
@@ -178,6 +199,7 @@ export default function WorkspaceApp({
       {showMembers && <MembersModal workspaceId={workspaceId} onClose={() => setShowMembers(false)} />}
       {showLessons && <LessonsModal workspaceId={workspaceId} onClose={() => setShowLessons(false)} />}
       {showImpact && <ImpactModal workspaceId={workspaceId} onClose={() => setShowImpact(false)} />}
+      {showInbox && <InboxModal items={inbox} onOpenTask={setSelectedId} onClose={() => setShowInbox(false)} />}
     </div>
   );
 }

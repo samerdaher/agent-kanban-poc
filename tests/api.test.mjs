@@ -304,6 +304,37 @@ test('impact manifest is extracted and rolled up', async () => {
   assert.ok(roll.data.tasks.some((t) => t.id === data.task.id));
 });
 
+test('inbox lists review requests and assigned human tasks', async () => {
+  const me = (await api('GET', '/api/auth/me')).data.user.id;
+  const human = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Inbox: my human task',
+    type: 'human',
+    status: 'sprint',
+    assigneeUserId: me,
+  });
+  const review = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Inbox: needs my review',
+    type: 'agent',
+    status: 'sprint',
+    askHuman: true,
+    reviewerUserId: me,
+  });
+  await waitForStatus(wid, review.data.task.id, ['blocked']);
+
+  const inbox = await api('GET', `/api/workspaces/${wid}/inbox`);
+  assert.equal(inbox.status, 200);
+  const ids = inbox.data.items.map((i) => i.id);
+  assert.ok(ids.includes(human.data.task.id), 'assigned human task in inbox');
+  assert.ok(ids.includes(review.data.task.id), 'review request in inbox');
+
+  // clearing them empties the inbox entries
+  await api('POST', `/api/workspaces/${wid}/tasks/${review.data.task.id}/answer`, { answer: '', action: 'approve' });
+  await api('PATCH', `/api/workspaces/${wid}/tasks/${human.data.task.id}`, { status: 'completed' });
+  const after = await api('GET', `/api/workspaces/${wid}/inbox`);
+  const afterIds = after.data.items.map((i) => i.id);
+  assert.ok(!afterIds.includes(human.data.task.id) && !afterIds.includes(review.data.task.id));
+});
+
 test('archive and delete lifecycle', async () => {
   const t = await api('POST', `/api/workspaces/${wid}/tasks`, { title: 'To archive', type: 'human' });
   const id = t.data.task.id;

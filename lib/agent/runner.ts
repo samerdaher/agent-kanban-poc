@@ -8,6 +8,7 @@ import {
   listSprintAgentTasks,
   listTasksByStatus,
   recordRun,
+  getUserById,
 } from '../store';
 import { Task, BlockedKind } from '../types';
 import { executeTask } from './claude';
@@ -210,11 +211,16 @@ async function runPipeline(taskId: string) {
   // ---- Optional gate: human confirmation before completing -------------
   // (asks after every revision too — only an explicit approval completes)
   if (t2.askHuman) {
-    t2.pendingQuestion =
-      'The deliverable is ready. Approve to complete, or request changes and the agent will revise.';
+    const reviewer = t2.reviewerUserId ? getUserById(t2.reviewerUserId) : null;
+    t2.pendingQuestion = `The deliverable is ready${reviewer ? ` — review requested from ${reviewer.name}` : ''}. Approve to complete, or request changes and the agent will revise.`;
     saveTask(t2);
     addUpdate(t2, 'question', t2.pendingQuestion);
-    block(t2, 'human_question', 'Waiting on a human answer before completing.', []);
+    block(
+      t2,
+      'human_question',
+      `Waiting on ${reviewer ? reviewer.name : 'a human'} to answer before completing.`,
+      [],
+    );
     return;
   }
 

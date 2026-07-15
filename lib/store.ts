@@ -186,6 +186,8 @@ function rowToTask(r: Record<string, unknown>, updates: TaskUpdate[]): Task {
     definitionOfDone: (r.definition_of_done as string) ?? null,
     executor: ((r.executor as string) || 'auto') as Task['executor'],
     impact: r.impact ? JSON.parse(r.impact as string) : null,
+    assigneeUserId: (r.assignee_user_id as string) ?? null,
+    reviewerUserId: (r.reviewer_user_id as string) ?? null,
     createdBy: (r.created_by as string) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
@@ -267,6 +269,8 @@ export function createTask(
     definitionOfDone: null,
     executor: 'auto',
     impact: null,
+    assigneeUserId: null,
+    reviewerUserId: null,
     createdBy,
     createdAt: now(),
     updatedAt: now(),
@@ -277,8 +281,9 @@ export function createTask(
     .prepare(
       `INSERT INTO tasks (id, workspace_id, title, description, type, status, priority, tags,
         requirements, dependencies, ask_human, blocked, pending_question, output, attachments,
-        definition_of_done, executor, impact, created_by, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        definition_of_done, executor, impact, assignee_user_id, reviewer_user_id,
+        created_by, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       task.id,
@@ -299,6 +304,8 @@ export function createTask(
       task.definitionOfDone,
       task.executor,
       task.impact ? JSON.stringify(task.impact) : null,
+      task.assigneeUserId,
+      task.reviewerUserId,
       task.createdBy,
       task.createdAt,
       task.updatedAt,
@@ -315,7 +322,8 @@ export function saveTask(task: Task) {
     .prepare(
       `UPDATE tasks SET title = ?, description = ?, status = ?, priority = ?, tags = ?,
         requirements = ?, dependencies = ?, ask_human = ?, blocked = ?, pending_question = ?,
-        output = ?, attachments = ?, definition_of_done = ?, executor = ?, impact = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
+        output = ?, attachments = ?, definition_of_done = ?, executor = ?, impact = ?,
+        assignee_user_id = ?, reviewer_user_id = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
     )
     .run(
       task.title,
@@ -333,6 +341,8 @@ export function saveTask(task: Task) {
       task.definitionOfDone,
       task.executor,
       task.impact ? JSON.stringify(task.impact) : null,
+      task.assigneeUserId,
+      task.reviewerUserId,
       task.updatedAt,
       task.completedAt,
       task.id,

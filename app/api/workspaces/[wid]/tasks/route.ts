@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireMember } from '@/lib/auth';
-import { listTasks, listResources, createTask, addUpdate } from '@/lib/store';
+import { listTasks, listResources, createTask, addUpdate, getWorkspaceRole } from '@/lib/store';
 import { triggerAgents, reconcileBlocked } from '@/lib/agent/runner';
 
 export const dynamic = 'force-dynamic';
@@ -37,6 +37,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ wid
           ? body.definitionOfDone.trim()
           : null,
       executor: ['auto', 'api', 'subscription'].includes(body.executor) ? body.executor : 'auto',
+      assigneeUserId:
+        typeof body.assigneeUserId === 'string' && getWorkspaceRole(wid, body.assigneeUserId)
+          ? body.assigneeUserId
+          : null,
+      reviewerUserId:
+        typeof body.reviewerUserId === 'string' && getWorkspaceRole(wid, body.reviewerUserId)
+          ? body.reviewerUserId
+          : null,
     },
     auth.user.id,
   );

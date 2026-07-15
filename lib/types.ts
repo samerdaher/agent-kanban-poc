@@ -72,6 +72,10 @@ export interface Task {
   executor: TaskExecutor;
   /** development impact manifest extracted from the run (null when nothing was touched) */
   impact: TaskImpact | null;
+  /** human tasks: who works it */
+  assigneeUserId: string | null;
+  /** agent tasks with the review gate: whose approval is requested */
+  reviewerUserId: string | null;
   /** execution runs with token usage & cost (populated on reads) */
   runs?: TaskRun[];
   createdBy: string | null;

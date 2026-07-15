@@ -1,18 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { Task, Resource, TaskType, TaskExecutor } from '@/lib/types';
+import { Task, Resource, TaskType, TaskExecutor, Member } from '@/lib/types';
 
 export default function NewTaskModal({
   workspaceId,
   tasks,
   resources,
+  members,
   onClose,
   onCreated,
 }: {
   workspaceId: string;
   tasks: Task[];
   resources: Resource[];
+  members: Member[];
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -25,6 +27,8 @@ export default function NewTaskModal({
   const [askHuman, setAskHuman] = useState(false);
   const [definitionOfDone, setDefinitionOfDone] = useState('');
   const [executor, setExecutor] = useState<TaskExecutor>('auto');
+  const [assigneeUserId, setAssigneeUserId] = useState('');
+  const [reviewerUserId, setReviewerUserId] = useState('');
   const [toSprint, setToSprint] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -47,6 +51,8 @@ export default function NewTaskModal({
         askHuman,
         definitionOfDone: definitionOfDone.trim() || undefined,
         executor,
+        assigneeUserId: assigneeUserId || undefined,
+        reviewerUserId: reviewerUserId || undefined,
       }),
     });
     setBusy(false);
@@ -155,12 +161,40 @@ export default function NewTaskModal({
           </div>
         )}
 
+        {type === 'human' && members.length > 0 && (
+          <div className="field">
+            <label>Assignee</label>
+            <select value={assigneeUserId} onChange={(e) => setAssigneeUserId(e.target.value)}>
+              <option value="">— unassigned —</option>
+              {members.map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {type === 'agent' && (
           <div className="field checkbox-row">
             <input id="askHuman" type="checkbox" checked={askHuman} onChange={(e) => setAskHuman(e.target.checked)} />
             <label htmlFor="askHuman" style={{ margin: 0, textTransform: 'none', letterSpacing: 0 }}>
               Agent must ask a human to confirm before completing
             </label>
+          </div>
+        )}
+
+        {type === 'agent' && askHuman && members.length > 0 && (
+          <div className="field">
+            <label>Reviewer (whose approval is requested)</label>
+            <select value={reviewerUserId} onChange={(e) => setReviewerUserId(e.target.value)}>
+              <option value="">— anyone —</option>
+              {members.map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 

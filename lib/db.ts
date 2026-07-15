@@ -134,6 +134,10 @@ function migrateColumns(d: DatabaseSync) {
   if (!taskCols.includes('impact')) {
     d.exec('ALTER TABLE tasks ADD COLUMN impact TEXT');
   }
+  if (!taskCols.includes('assignee_user_id')) {
+    d.exec('ALTER TABLE tasks ADD COLUMN assignee_user_id TEXT');
+    d.exec('ALTER TABLE tasks ADD COLUMN reviewer_user_id TEXT');
+  }
 }
 
 export function db(): DatabaseSync {
