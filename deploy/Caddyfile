@@ -24,7 +24,9 @@ board.example.com {
 }
 
 # --- no-domain fallback (self-signed): delete the block above and uncomment ---
-# :443 {
+# NOTE: list the hostnames/IPs explicitly — a bare ":443" gives Caddy no
+# subject to issue a certificate for, and every TLS handshake fails.
+# localhost, YOUR.SERVER.IP {
 #     tls internal
 #     reverse_proxy localhost:3000
 # }
