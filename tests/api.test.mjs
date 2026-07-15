@@ -285,6 +285,25 @@ test('re-run with instructions builds on the previous output', async () => {
   assert.equal(noHuman.status, 400);
 });
 
+test('impact manifest is extracted and rolled up', async () => {
+  const { data } = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Impact probe',
+    description: 'Update lib/billing.ts and run CREATE TABLE invoices; expose POST /api/invoices',
+    type: 'agent',
+    status: 'sprint',
+  });
+  const task = await waitForStatus(wid, data.task.id, ['completed']);
+  assert.ok(task.impact, 'impact should be extracted');
+  assert.ok(task.impact.files.includes('lib/billing.ts'));
+  assert.ok(task.impact.tables.includes('invoices'));
+  assert.ok(task.impact.endpoints.some((e) => e.includes('POST /api/invoices')));
+
+  const roll = await api('GET', `/api/workspaces/${wid}/impact`);
+  assert.equal(roll.status, 200);
+  assert.ok(roll.data.totals.tasks >= 1);
+  assert.ok(roll.data.tasks.some((t) => t.id === data.task.id));
+});
+
 test('archive and delete lifecycle', async () => {
   const t = await api('POST', `/api/workspaces/${wid}/tasks`, { title: 'To archive', type: 'human' });
   const id = t.data.task.id;

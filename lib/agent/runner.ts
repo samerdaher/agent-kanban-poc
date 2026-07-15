@@ -12,6 +12,7 @@ import {
 import { Task, BlockedKind } from '../types';
 import { executeTask } from './claude';
 import { distillLesson } from './lessons';
+import { extractImpactHeuristic, enrichImpact } from './impact';
 import { notifySlack } from '../notify';
 
 /**
@@ -203,6 +204,8 @@ async function runPipeline(taskId: string) {
   if (result.importantUpdate) addUpdate(t2, 'info', result.importantUpdate);
   t2.output = result.output;
   t2.attachments = result.attachments ?? [];
+  t2.impact = extractImpactHeuristic(t2, result.output);
+  if (t2.impact) void enrichImpact(t2.id); // adds an AI summary later, best-effort
 
   // ---- Optional gate: human confirmation before completing -------------
   // (asks after every revision too — only an explicit approval completes)

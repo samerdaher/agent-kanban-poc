@@ -251,6 +251,35 @@ export default function TaskDetail({
             </div>
           )}
 
+          {task.impact && (
+            <div className="section">
+              <h4>Development impact</h4>
+              {task.impact.summary && <p className="desc" style={{ marginBottom: 8 }}>{task.impact.summary}</p>}
+              <div className="status-line">
+                {task.impact.files.map((f) => (
+                  <span key={f} className="chip tag" title="file">
+                    📄 {f}
+                  </span>
+                ))}
+                {task.impact.tables.map((t) => (
+                  <span key={t} className="chip dep" title="table">
+                    🗄 {t}
+                  </span>
+                ))}
+                {task.impact.endpoints.map((e) => (
+                  <span key={e} className="chip req" title="endpoint">
+                    🔀 {e}
+                  </span>
+                ))}
+                {task.impact.links.map((l) => (
+                  <a key={l} className="chip tag" href={l} target="_blank" rel="noreferrer">
+                    🔗 {l.replace('https://github.com/', '')}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           {task.output && (
             <div className="section">
               <h4>Final Output</h4>

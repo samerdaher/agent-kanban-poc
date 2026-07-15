@@ -131,6 +131,9 @@ function migrateColumns(d: DatabaseSync) {
   if (!taskCols.includes('executor')) {
     d.exec("ALTER TABLE tasks ADD COLUMN executor TEXT NOT NULL DEFAULT 'auto'");
   }
+  if (!taskCols.includes('impact')) {
+    d.exec('ALTER TABLE tasks ADD COLUMN impact TEXT');
+  }
 }
 
 export function db(): DatabaseSync {

@@ -8,6 +8,7 @@ import NewTaskModal from '@/components/NewTaskModal';
 import ResourcesModal from '@/components/ResourcesModal';
 import MembersModal from '@/components/MembersModal';
 import LessonsModal from '@/components/LessonsModal';
+import ImpactModal from '@/components/ImpactModal';
 
 export default function WorkspaceApp({
   workspaceId,
@@ -25,6 +26,7 @@ export default function WorkspaceApp({
   const [showResources, setShowResources] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [showLessons, setShowLessons] = useState(false);
+  const [showImpact, setShowImpact] = useState(false);
   const [live, setLive] = useState(false);
   const [creatingWs, setCreatingWs] = useState(false);
   const [spend, setSpend] = useState<number | null>(null);
@@ -122,6 +124,9 @@ export default function WorkspaceApp({
           </span>
         )}
         <div className="spacer" />
+        <button className="btn" onClick={() => setShowImpact(true)}>
+          🛠 Dev
+        </button>
         <button className="btn" onClick={() => setShowLessons(true)}>
           🧠 Memory
         </button>
@@ -172,6 +177,7 @@ export default function WorkspaceApp({
       )}
       {showMembers && <MembersModal workspaceId={workspaceId} onClose={() => setShowMembers(false)} />}
       {showLessons && <LessonsModal workspaceId={workspaceId} onClose={() => setShowLessons(false)} />}
+      {showImpact && <ImpactModal workspaceId={workspaceId} onClose={() => setShowImpact(false)} />}
     </div>
   );
 }

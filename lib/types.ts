@@ -70,6 +70,8 @@ export interface Task {
   definitionOfDone: string | null;
   /** where this task executes: forced 'api' / 'subscription', or 'auto' (rules + Claude router) */
   executor: TaskExecutor;
+  /** development impact manifest extracted from the run (null when nothing was touched) */
+  impact: TaskImpact | null;
   /** execution runs with token usage & cost (populated on reads) */
   runs?: TaskRun[];
   createdBy: string | null;
@@ -93,6 +95,18 @@ export interface TaskRun {
   /** outcome grading result: 'passed' | 'max_iterations' | null (no rubric) */
   outcome: string | null;
   ts: string;
+}
+
+/** What a run touched — files, tables, endpoints — for the dev rollup. */
+export interface TaskImpact {
+  summary: string;
+  files: string[];
+  tables: string[];
+  endpoints: string[];
+  migrations: string[];
+  links: string[];
+  /** 'heuristic' = regex extraction; 'ai' = enriched with a model summary */
+  source: 'heuristic' | 'ai';
 }
 
 export type LessonKind = 'correction' | 'failure' | 'insight';
