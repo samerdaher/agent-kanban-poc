@@ -147,6 +147,22 @@ function migrateColumns(d: DatabaseSync) {
     kind TEXT NOT NULL DEFAULT 'informs',
     PRIMARY KEY (from_id, to_id, kind)
   )`);
+  const wsCols = (d.prepare('PRAGMA table_info(workspaces)').all() as { name: string }[]).map((c) => c.name);
+  if (!wsCols.includes('monthly_budget_usd')) {
+    d.exec('ALTER TABLE workspaces ADD COLUMN monthly_budget_usd REAL');
+    d.exec('ALTER TABLE workspaces ADD COLUMN runner_paused INTEGER NOT NULL DEFAULT 0');
+  }
+  d.exec(`CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    actor_user_id TEXT,
+    actor_name TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    target TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    ts TEXT NOT NULL
+  )`);
+  d.exec('CREATE INDEX IF NOT EXISTS idx_audit_ws ON audit_log(workspace_id, ts)');
 }
 
 export function db(): DatabaseSync {

@@ -22,7 +22,7 @@ export type TaskStatus =
   | 'completed'
   | 'archived';
 
-export type BlockedKind = 'dependency' | 'missing_resource' | 'human_question' | 'error';
+export type BlockedKind = 'dependency' | 'missing_resource' | 'human_question' | 'error' | 'budget';
 
 export interface BlockedInfo {
   kind: BlockedKind;
@@ -161,7 +161,18 @@ export interface User {
   createdAt: string;
 }
 
-export type MemberRole = 'owner' | 'member';
+export type MemberRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+export interface AuditEntry {
+  id: string;
+  workspaceId: string;
+  actorUserId: string | null;
+  actorName: string;
+  action: string;
+  target: string;
+  detail: string;
+  ts: string;
+}
 
 export interface Member {
   userId: string;

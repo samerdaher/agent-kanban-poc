@@ -108,9 +108,14 @@ export function getWorkspaceRole(workspaceId: string, userId: string): MemberRol
   return row?.role ?? null;
 }
 
-export function getWorkspaceMeta(
-  workspaceId: string,
-): { id: string; name: string; webhookToken: string; createdAt: string } | null {
+export function getWorkspaceMeta(workspaceId: string): {
+  id: string;
+  name: string;
+  webhookToken: string;
+  createdAt: string;
+  monthlyBudgetUsd: number | null;
+  runnerPaused: boolean;
+} | null {
   const row = db().prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId) as
     | Record<string, unknown>
     | undefined;
@@ -120,7 +125,75 @@ export function getWorkspaceMeta(
     name: row.name as string,
     webhookToken: row.webhook_token as string,
     createdAt: row.created_at as string,
+    monthlyBudgetUsd: row.monthly_budget_usd == null ? null : Number(row.monthly_budget_usd),
+    runnerPaused: Boolean(row.runner_paused),
   };
+}
+
+export function setWorkspaceSettings(
+  workspaceId: string,
+  patch: { monthlyBudgetUsd?: number | null; runnerPaused?: boolean },
+) {
+  if (patch.monthlyBudgetUsd !== undefined) {
+    db().prepare('UPDATE workspaces SET monthly_budget_usd = ? WHERE id = ?').run(patch.monthlyBudgetUsd, workspaceId);
+  }
+  if (patch.runnerPaused !== undefined) {
+    db().prepare('UPDATE workspaces SET runner_paused = ? WHERE id = ?').run(patch.runnerPaused ? 1 : 0, workspaceId);
+  }
+  publish(workspaceId);
+}
+
+export function isRunnerPaused(workspaceId: string): boolean {
+  const row = db().prepare('SELECT runner_paused FROM workspaces WHERE id = ?').get(workspaceId) as
+    | { runner_paused: number }
+    | undefined;
+  return Boolean(row?.runner_paused);
+}
+
+/** API-credit spend this calendar month vs the workspace budget. */
+export function budgetStatus(workspaceId: string): { budget: number | null; spentThisMonth: number; over: boolean } {
+  const meta = getWorkspaceMeta(workspaceId);
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const row = db()
+    .prepare('SELECT COALESCE(SUM(cost_usd),0) AS c FROM task_runs WHERE workspace_id = ? AND ts >= ?')
+    .get(workspaceId, monthStart.toISOString()) as { c: number };
+  const budget = meta?.monthlyBudgetUsd ?? null;
+  const spent = Number(row.c);
+  return { budget, spentThisMonth: spent, over: budget !== null && spent >= budget };
+}
+
+/* ------------------------------ audit --------------------------------- */
+
+export function logAudit(
+  workspaceId: string,
+  actor: { id: string; name: string } | null,
+  action: string,
+  target = '',
+  detail = '',
+) {
+  db()
+    .prepare(
+      'INSERT INTO audit_log (id, workspace_id, actor_user_id, actor_name, action, target, detail, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    )
+    .run(uid('a'), workspaceId, actor?.id ?? null, actor?.name ?? 'system', action, target, detail.slice(0, 400), now());
+}
+
+export function listAudit(workspaceId: string, limit = 100) {
+  const rows = db()
+    .prepare('SELECT * FROM audit_log WHERE workspace_id = ? ORDER BY ts DESC LIMIT ?')
+    .all(workspaceId, limit) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: r.id as string,
+    workspaceId: r.workspace_id as string,
+    actorUserId: (r.actor_user_id as string) ?? null,
+    actorName: r.actor_name as string,
+    action: r.action as string,
+    target: r.target as string,
+    detail: r.detail as string,
+    ts: r.ts as string,
+  }));
 }
 
 export function getWorkspaceIdByWebhookToken(token: string): string | null {
@@ -146,16 +219,26 @@ export function listMembers(workspaceId: string): Member[] {
   }));
 }
 
-export function addMemberByEmail(workspaceId: string, email: string): Member {
+export function addMemberByEmail(workspaceId: string, email: string, role: MemberRole = 'member'): Member {
   const user = getUserByEmail(email);
   if (!user) throw new Error('No account with that email — ask them to sign up first.');
   if (getWorkspaceRole(workspaceId, user.id)) throw new Error('Already a member of this workspace.');
+  const safeRole: MemberRole = ['admin', 'member', 'viewer'].includes(role) ? role : 'member';
   const addedAt = now();
   db()
     .prepare('INSERT INTO members (workspace_id, user_id, role, added_at) VALUES (?, ?, ?, ?)')
-    .run(workspaceId, user.id, 'member', addedAt);
+    .run(workspaceId, user.id, safeRole, addedAt);
   publish(workspaceId);
-  return { userId: user.id, email: user.email, name: user.name, role: 'member', addedAt };
+  return { userId: user.id, email: user.email, name: user.name, role: safeRole, addedAt };
+}
+
+export function setMemberRole(workspaceId: string, userId: string, role: MemberRole): boolean {
+  if (!['admin', 'member', 'viewer'].includes(role)) return false;
+  const current = getWorkspaceRole(workspaceId, userId);
+  if (!current || current === 'owner') return false; // the owner's role is fixed
+  db().prepare('UPDATE members SET role = ? WHERE workspace_id = ? AND user_id = ?').run(role, workspaceId, userId);
+  publish(workspaceId);
+  return true;
 }
 
 export function listAllWorkspaceIds(): string[] {

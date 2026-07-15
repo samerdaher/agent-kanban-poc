@@ -175,6 +175,8 @@ function Card({
 function blockedLabel(kind: string) {
   if (kind === 'dependency') return '⛓ dependency';
   if (kind === 'missing_resource') return '🔑 resource';
+  if (kind === 'budget') return '💸 budget';
+  if (kind === 'error') return '⚠ error';
   return '❓ human';
 }
 

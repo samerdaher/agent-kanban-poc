@@ -69,14 +69,26 @@ export function requireUser(req: NextRequest): { user: User } | NextResponse {
   return { user };
 }
 
-/** For workspace-scoped route handlers: membership check on top of auth. */
+const ROLE_RANK: Record<MemberRole, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
+
+/**
+ * For workspace-scoped route handlers: membership check on top of auth.
+ * `minRole` gates writes: viewers are read-only; admins govern the workspace.
+ */
 export function requireMember(
   req: NextRequest,
   workspaceId: string,
+  minRole: MemberRole = 'viewer',
 ): { user: User; role: MemberRole } | NextResponse {
   const auth = requireUser(req);
   if (auth instanceof NextResponse) return auth;
   const role = getWorkspaceRole(workspaceId, auth.user.id);
   if (!role) return NextResponse.json({ error: 'Not a member of this workspace.' }, { status: 403 });
+  if (ROLE_RANK[role] < ROLE_RANK[minRole]) {
+    return NextResponse.json(
+      { error: `This needs the ${minRole} role — you are a ${role} here.` },
+      { status: 403 },
+    );
+  }
   return { user: auth.user, role };
 }

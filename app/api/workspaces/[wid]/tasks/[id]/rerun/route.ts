@@ -11,7 +11,7 @@ export async function POST(
   { params }: { params: Promise<{ wid: string; id: string }> },
 ) {
   const { wid, id } = await params;
-  const auth = requireMember(req, wid);
+  const auth = requireMember(req, wid, 'member');
   if (auth instanceof NextResponse) return auth;
 
   const task = getTask(id);

@@ -11,9 +11,11 @@ import {
   getUserById,
   createTask,
   setInforms,
+  budgetStatus,
+  isRunnerPaused,
 } from '../store';
 import { Task, BlockedKind } from '../types';
-import { executeTask } from './claude';
+import { executeTask, hasApiKey, subscriptionEnabled } from './claude';
 import { distillLesson } from './lessons';
 import { extractImpactHeuristic, enrichImpact } from './impact';
 import { generateEpicPlan, generateEpicDigest, renderPlanMarkdown } from './planner';
@@ -176,6 +178,29 @@ async function runPipeline(taskId: string) {
       missing,
     );
     return;
+  }
+
+  // ---- Gate 3: monthly credit budget -----------------------------------
+  const bs = budgetStatus(task.workspaceId);
+  if (bs.over && task.executor !== 'subscription') {
+    if (subscriptionEnabled()) {
+      task.executor = 'subscription';
+      saveTask(task);
+      addUpdate(
+        task,
+        'info',
+        `Monthly credit budget reached ($${bs.spentThisMonth.toFixed(2)} of $${bs.budget}) — forcing the free subscription executor for this run.`,
+        'system',
+      );
+    } else if (hasApiKey()) {
+      block(
+        task,
+        'budget',
+        `Monthly credit budget reached ($${bs.spentThisMonth.toFixed(2)} of $${bs.budget}). Raise the budget in workspace settings to resume.`,
+        [],
+      );
+      return;
+    }
   }
 
   // ---- Phase: building context ----------------------------------------
@@ -360,6 +385,11 @@ export function reconcileBlocked(workspaceId?: string) {
       task.blocked = null;
       saveTask(task);
       addUpdate(task, 'status', 'Required resources are now available — task is ready again.', 'system');
+    } else if (task.blocked.kind === 'budget' && !budgetStatus(task.workspaceId).over) {
+      task.status = 'sprint';
+      task.blocked = null;
+      saveTask(task);
+      addUpdate(task, 'status', 'Budget available again — task is ready.', 'system');
     }
   }
 }
@@ -372,6 +402,7 @@ export function triggerAgents(workspaceId?: string) {
   for (const task of listSprintAgentTasks(workspaceId)) {
     if (active().size >= MAX_CONCURRENT) return; // queue drains as runs finish
     if (active().has(task.id)) continue;
+    if (isRunnerPaused(task.workspaceId)) continue; // admin paused this workspace
     active().add(task.id);
     runPipeline(task.id)
       .catch((err) => {

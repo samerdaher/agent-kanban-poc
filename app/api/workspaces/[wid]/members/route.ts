@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireMember } from '@/lib/auth';
-import { listMembers, addMemberByEmail } from '@/lib/store';
+import { listMembers, addMemberByEmail, logAudit } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,13 +13,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ wid:
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ wid: string }> }) {
   const { wid } = await params;
-  const auth = requireMember(req, wid);
+  const auth = requireMember(req, wid, 'admin');
   if (auth instanceof NextResponse) return auth;
   const body = await req.json().catch(() => ({}));
   const email = String(body.email || '').trim();
   if (!email) return NextResponse.json({ error: 'email is required' }, { status: 400 });
   try {
-    const member = addMemberByEmail(wid, email);
+    const member = addMemberByEmail(wid, email, body.role);
+    logAudit(wid, auth.user, 'member.invited', member.email, `role: ${member.role}`);
     return NextResponse.json({ member }, { status: 201 });
   } catch (err) {
     return NextResponse.json(

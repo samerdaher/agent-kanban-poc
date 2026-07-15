@@ -9,7 +9,7 @@ export async function DELETE(
   { params }: { params: Promise<{ wid: string; lid: string }> },
 ) {
   const { wid, lid } = await params;
-  const auth = requireMember(req, wid);
+  const auth = requireMember(req, wid, 'member');
   if (auth instanceof NextResponse) return auth;
   if (!deleteLesson(wid, lid)) return NextResponse.json({ error: 'not found' }, { status: 404 });
   return NextResponse.json({ ok: true });

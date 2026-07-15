@@ -417,6 +417,67 @@ test('archive and delete lifecycle', async () => {
   assert.equal(gone.status, 404);
 });
 
+test('roles: viewers are read-only until promoted; governance is admin-gated', async () => {
+  // second account
+  const res = await fetch(`${BASE}/api/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'viewer@example.com', name: 'View Only', password: 'password123' }),
+  });
+  const viewerCookie = (res.headers.get('set-cookie') || '').split(';')[0];
+  const viewerId = (await res.json()).user.id;
+  const asViewer = (method, url, body) =>
+    fetch(`${BASE}${url}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', Cookie: viewerCookie },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+  // owner invites them as viewer
+  const inv = await api('POST', `/api/workspaces/${wid}/members`, { email: 'viewer@example.com', role: 'viewer' });
+  assert.equal(inv.status, 201);
+  assert.equal(inv.data.member.role, 'viewer');
+
+  // viewer can read, cannot write, cannot govern
+  assert.equal((await asViewer('GET', `/api/workspaces/${wid}/tasks`)).status, 200);
+  assert.equal((await asViewer('POST', `/api/workspaces/${wid}/tasks`, { title: 'nope', type: 'human' })).status, 403);
+  assert.equal((await asViewer('PATCH', `/api/workspaces/${wid}`, { runnerPaused: true })).status, 403);
+  assert.equal((await asViewer('GET', `/api/workspaces/${wid}/audit`)).status, 403);
+
+  // promote to member → can write
+  const promote = await api('PATCH', `/api/workspaces/${wid}/members/${viewerId}`, { role: 'member' });
+  assert.equal(promote.status, 200);
+  assert.equal(
+    (await asViewer('POST', `/api/workspaces/${wid}/tasks`, { title: 'now allowed', type: 'human' })).status,
+    201,
+  );
+
+  // audit recorded the invite and the role change (owner can read it)
+  const audit = await api('GET', `/api/workspaces/${wid}/audit`);
+  assert.equal(audit.status, 200);
+  assert.ok(audit.data.entries.some((e) => e.action === 'member.invited'));
+  assert.ok(audit.data.entries.some((e) => e.action === 'member.role_changed'));
+});
+
+test('runner pause stops pickups; resume drains the queue', async () => {
+  const pause = await api('PATCH', `/api/workspaces/${wid}`, { runnerPaused: true });
+  assert.equal(pause.status, 200);
+  assert.equal(pause.data.workspace.runnerPaused, true);
+
+  const { data } = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Paused probe',
+    type: 'agent',
+    status: 'sprint',
+  });
+  await sleep(3000);
+  let task = (await api('GET', `/api/workspaces/${wid}/tasks/${data.task.id}`)).data.task;
+  assert.equal(task.status, 'sprint', 'task must not be picked up while paused');
+
+  await api('PATCH', `/api/workspaces/${wid}`, { runnerPaused: false });
+  task = await waitForStatus(wid, data.task.id, ['completed']);
+  assert.equal(task.status, 'completed');
+});
+
 test('stats aggregate runs for the workspace', async () => {
   const { status, data } = await api('GET', `/api/workspaces/${wid}/stats`);
   assert.equal(status, 200);

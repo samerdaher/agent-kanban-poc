@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ wid:
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ wid: string }> }) {
   const { wid } = await params;
-  const auth = requireMember(req, wid);
+  const auth = requireMember(req, wid, 'member');
   if (auth instanceof NextResponse) return auth;
   const body = await req.json().catch(() => ({}));
   if (!body.title || !body.type) {

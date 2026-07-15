@@ -31,7 +31,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const { wid, id } = await params;
-  const auth = requireMember(req, wid);
+  const auth = requireMember(req, wid, 'member');
   if (auth instanceof NextResponse) return auth;
   const task = getTask(id);
   if (!task || task.workspaceId !== wid) return NextResponse.json({ error: 'not found' }, { status: 404 });
@@ -123,7 +123,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   const { wid, id } = await params;
-  const auth = requireMember(req, wid);
+  const auth = requireMember(req, wid, 'member');
   if (auth instanceof NextResponse) return auth;
   const task = getTask(id);
   if (!task || task.workspaceId !== wid) return NextResponse.json({ error: 'not found' }, { status: 404 });
