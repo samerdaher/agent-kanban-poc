@@ -8,6 +8,7 @@ import NewTaskModal from '@/components/NewTaskModal';
 import ResourcesModal from '@/components/ResourcesModal';
 import MembersModal from '@/components/MembersModal';
 import LessonsModal from '@/components/LessonsModal';
+import AutomationModal from '@/components/AutomationModal';
 import ImpactModal from '@/components/ImpactModal';
 import InboxModal from '@/components/InboxModal';
 import GraphModal from '@/components/GraphModal';
@@ -28,6 +29,7 @@ export default function WorkspaceApp({
   const [showResources, setShowResources] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [showLessons, setShowLessons] = useState(false);
+  const [showAutomation, setShowAutomation] = useState(false);
   const [showImpact, setShowImpact] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
@@ -155,6 +157,9 @@ export default function WorkspaceApp({
         <button className="btn" onClick={() => setShowLessons(true)}>
           🧠 Memory
         </button>
+        <button className="btn" onClick={() => setShowAutomation(true)}>
+          ⚙️ Automation
+        </button>
         <button className="btn" onClick={() => setShowMembers(true)}>
           👥 Members
         </button>
@@ -203,6 +208,7 @@ export default function WorkspaceApp({
       )}
       {showMembers && <MembersModal workspaceId={workspaceId} onClose={() => setShowMembers(false)} />}
       {showLessons && <LessonsModal workspaceId={workspaceId} onClose={() => setShowLessons(false)} />}
+      {showAutomation && <AutomationModal workspaceId={workspaceId} onClose={() => setShowAutomation(false)} />}
       {showImpact && <ImpactModal workspaceId={workspaceId} onClose={() => setShowImpact(false)} />}
       {showInbox && <InboxModal items={inbox} onOpenTask={setSelectedId} onClose={() => setShowInbox(false)} />}
       {showGraph && <GraphModal tasks={tasks} onOpenTask={setSelectedId} onClose={() => setShowGraph(false)} />}

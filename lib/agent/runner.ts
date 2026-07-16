@@ -13,6 +13,9 @@ import {
   setInforms,
   budgetStatus,
   isRunnerPaused,
+  listRules,
+  getTemplate,
+  createTaskFromTemplate,
 } from '../store';
 import { Task, BlockedKind } from '../types';
 import { executeTask, hasApiKey, subscriptionEnabled } from './claude';
@@ -364,6 +367,24 @@ function finish(task: Task) {
   saveTask(task);
   addUpdate(task, 'output', 'Final output attached. Task completed.');
   notifySlack(task, `✅ *${task.title}* completed — output attached to the card.`);
+
+  // automation rules: "task with tag X completed → create from template"
+  // (rule-created tasks are tagged so rules can't chain into loops)
+  try {
+    if (!task.tags.includes('auto:rule')) {
+      const tags = task.tags.map((t) => t.toLowerCase());
+      for (const rule of listRules(task.workspaceId)) {
+        if (!rule.enabled || !tags.includes(rule.triggerTag)) continue;
+        const tpl = getTemplate(task.workspaceId, rule.templateId);
+        if (!tpl) continue;
+        const created = createTaskFromTemplate(tpl, `by rule (“${rule.triggerTag}” completed)`, ['auto:rule']);
+        addUpdate(task, 'info', `Automation rule fired — created “${created.title}”.`, 'system');
+      }
+    }
+  } catch {
+    /* rules are best-effort */
+  }
+
   // Completing this task may unblock others (in any workspace via cross-refs).
   reconcileBlocked();
   triggerAgents();

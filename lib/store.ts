@@ -502,8 +502,21 @@ function rowToResource(r: Record<string, unknown>): Resource {
     kind: r.kind as ResourceKind,
     url: (r.url as string) ?? null,
     hasSecret: Boolean(r.secret_enc),
+    health: (r.health as string) ?? null,
+    healthCheckedAt: (r.health_checked_at as string) ?? null,
     addedAt: r.added_at as string,
   };
+}
+
+export function setResourceHealth(resourceId: string, health: string) {
+  db().prepare('UPDATE resources SET health = ?, health_checked_at = ? WHERE id = ?').run(health, now(), resourceId);
+}
+
+export function listAllMcpResources(): Resource[] {
+  const rows = db()
+    .prepare("SELECT * FROM resources WHERE kind = 'mcp' AND url IS NOT NULL")
+    .all() as Record<string, unknown>[];
+  return rows.map(rowToResource);
 }
 
 export function listResources(workspaceId: string): Resource[] {
@@ -531,6 +544,8 @@ export function addResource(
     kind: input.kind,
     url,
     hasSecret: Boolean(input.secret),
+    health: null,
+    healthCheckedAt: null,
     addedAt: now(),
   };
   db()
@@ -684,6 +699,157 @@ export function workspaceStats(workspaceId: string): {
     )
     .get(workspaceId) as { runs: number; it: number; ot: number; cost: number };
   return { runs: Number(r.runs), inputTokens: Number(r.it), outputTokens: Number(r.ot), costUsd: Number(r.cost) };
+}
+
+/* ================= templates, schedules, rules ========================= */
+
+import type { TaskTemplate, Schedule, Rule } from './types';
+
+const TEMPLATE_FIELDS = [
+  'title',
+  'description',
+  'type',
+  'tags',
+  'requirements',
+  'askHuman',
+  'definitionOfDone',
+  'executor',
+  'priority',
+] as const;
+
+export function addTemplate(
+  workspaceId: string,
+  name: string,
+  payload: Record<string, unknown>,
+  createdBy: string | null,
+): TaskTemplate {
+  const clean: Record<string, unknown> = {};
+  for (const f of TEMPLATE_FIELDS) if (payload[f] !== undefined) clean[f] = payload[f];
+  if (!clean.title) clean.title = name;
+  if (!clean.type || !['agent', 'human', 'epic'].includes(clean.type as string)) clean.type = 'agent';
+  const t: TaskTemplate = {
+    id: uid('tpl'),
+    workspaceId,
+    name: name.trim().slice(0, 120),
+    payload: clean as TaskTemplate['payload'],
+    createdAt: now(),
+  };
+  db()
+    .prepare('INSERT INTO task_templates (id, workspace_id, name, payload, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(t.id, workspaceId, t.name, JSON.stringify(t.payload), createdBy, t.createdAt);
+  publish(workspaceId);
+  return t;
+}
+
+export function listTemplates(workspaceId: string): TaskTemplate[] {
+  return (db().prepare('SELECT * FROM task_templates WHERE workspace_id = ? ORDER BY created_at DESC').all(workspaceId) as Record<string, unknown>[]).map(
+    (r) => ({
+      id: r.id as string,
+      workspaceId: r.workspace_id as string,
+      name: r.name as string,
+      payload: JSON.parse(r.payload as string),
+      createdAt: r.created_at as string,
+    }),
+  );
+}
+
+export function getTemplate(workspaceId: string, templateId: string): TaskTemplate | null {
+  return listTemplates(workspaceId).find((t) => t.id === templateId) ?? null;
+}
+
+export function deleteTemplate(workspaceId: string, templateId: string): boolean {
+  const n = Number(db().prepare('DELETE FROM task_templates WHERE id = ? AND workspace_id = ?').run(templateId, workspaceId).changes);
+  if (n) publish(workspaceId);
+  return n > 0;
+}
+
+/** Instantiate a template into a real Sprint task (used by schedules & rules). */
+export function createTaskFromTemplate(
+  template: TaskTemplate,
+  origin: string,
+  extraTags: string[] = [],
+): Task {
+  const p = template.payload;
+  const task = createTask(
+    template.workspaceId,
+    {
+      title: p.title,
+      description: p.description || '',
+      type: p.type,
+      status: 'sprint',
+      tags: [...new Set([...(p.tags || []), ...extraTags])],
+      requirements: p.requirements || [],
+      askHuman: Boolean(p.askHuman),
+      definitionOfDone: p.definitionOfDone || null,
+      executor: p.executor || 'auto',
+      priority: p.priority || 'medium',
+    },
+    null,
+  );
+  addUpdate(task, 'status', `Created ${origin} from template “${template.name}”.`, 'system');
+  return task;
+}
+
+export function addSchedule(workspaceId: string, cron: string, templateId: string): Schedule {
+  const s: Schedule = { id: uid('sch'), workspaceId, cron: cron.trim(), templateId, enabled: true, lastRun: null, createdAt: now() };
+  db()
+    .prepare('INSERT INTO schedules (id, workspace_id, cron, template_id, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)')
+    .run(s.id, workspaceId, s.cron, templateId, s.createdAt);
+  publish(workspaceId);
+  return s;
+}
+
+export function listSchedules(workspaceId?: string): Schedule[] {
+  const rows = (
+    workspaceId
+      ? db().prepare('SELECT * FROM schedules WHERE workspace_id = ?').all(workspaceId)
+      : db().prepare('SELECT * FROM schedules WHERE enabled = 1').all()
+  ) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: r.id as string,
+    workspaceId: r.workspace_id as string,
+    cron: r.cron as string,
+    templateId: r.template_id as string,
+    enabled: Boolean(r.enabled),
+    lastRun: (r.last_run as string) ?? null,
+    createdAt: r.created_at as string,
+  }));
+}
+
+export function markScheduleRun(scheduleId: string, minuteKey: string) {
+  db().prepare('UPDATE schedules SET last_run = ? WHERE id = ?').run(minuteKey, scheduleId);
+}
+
+export function deleteSchedule(workspaceId: string, scheduleId: string): boolean {
+  const n = Number(db().prepare('DELETE FROM schedules WHERE id = ? AND workspace_id = ?').run(scheduleId, workspaceId).changes);
+  if (n) publish(workspaceId);
+  return n > 0;
+}
+
+export function addRule(workspaceId: string, triggerTag: string, templateId: string): Rule {
+  const r: Rule = { id: uid('rul'), workspaceId, triggerTag: triggerTag.trim().toLowerCase(), templateId, enabled: true, createdAt: now() };
+  db()
+    .prepare('INSERT INTO rules (id, workspace_id, trigger_tag, template_id, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)')
+    .run(r.id, workspaceId, r.triggerTag, templateId, r.createdAt);
+  publish(workspaceId);
+  return r;
+}
+
+export function listRules(workspaceId: string): Rule[] {
+  return (db().prepare('SELECT * FROM rules WHERE workspace_id = ?').all(workspaceId) as Record<string, unknown>[]).map((r) => ({
+    id: r.id as string,
+    workspaceId: r.workspace_id as string,
+    triggerTag: r.trigger_tag as string,
+    templateId: r.template_id as string,
+    enabled: Boolean(r.enabled),
+    createdAt: r.created_at as string,
+  }));
+}
+
+export function deleteRule(workspaceId: string, ruleId: string): boolean {
+  const n = Number(db().prepare('DELETE FROM rules WHERE id = ? AND workspace_id = ?').run(ruleId, workspaceId).changes);
+  if (n) publish(workspaceId);
+  return n > 0;
 }
 
 /* ===================== seed & legacy JSON import ======================= */

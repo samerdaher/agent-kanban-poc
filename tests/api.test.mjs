@@ -478,6 +478,51 @@ test('runner pause stops pickups; resume drains the queue', async () => {
   assert.equal(task.status, 'completed');
 });
 
+test('automation: template + rule fires on tagged completion; export works', async () => {
+  const tpl = await api('POST', `/api/workspaces/${wid}/templates`, {
+    name: 'Post-deploy check',
+    payload: { title: 'Post-deploy check', type: 'agent', status: 'sprint', tags: ['auto-created'] },
+  });
+  assert.equal(tpl.status, 201);
+
+  const rule = await api('POST', `/api/workspaces/${wid}/rules`, {
+    triggerTag: 'deploy',
+    templateId: tpl.data.template.id,
+  });
+  assert.equal(rule.status, 201);
+
+  // schedule CRUD (tick itself is time-based; validated separately)
+  const badCron = await api('POST', `/api/workspaces/${wid}/schedules`, { cron: 'nope', templateId: tpl.data.template.id });
+  assert.equal(badCron.status, 400);
+  const sched = await api('POST', `/api/workspaces/${wid}/schedules`, { cron: '0 9 * * 1', templateId: tpl.data.template.id });
+  assert.equal(sched.status, 201);
+  await api('DELETE', `/api/workspaces/${wid}/schedules/${sched.data.schedule.id}`);
+
+  // completing a task tagged 'deploy' fires the rule
+  const t = await api('POST', `/api/workspaces/${wid}/tasks`, {
+    title: 'Ship it',
+    type: 'agent',
+    status: 'sprint',
+    tags: ['deploy'],
+  });
+  await waitForStatus(wid, t.data.task.id, ['completed']);
+  let created = null;
+  const deadline = Date.now() + 30000;
+  while (!created && Date.now() < deadline) {
+    const all = (await api('GET', `/api/workspaces/${wid}/tasks`)).data.tasks;
+    created = all.find((x) => x.title === 'Post-deploy check' && x.tags.includes('auto:rule'));
+    if (!created) await sleep(500);
+  }
+  assert.ok(created, 'rule should create the follow-up task');
+
+  // export (admin) includes the automation objects
+  const exp = await api('GET', `/api/workspaces/${wid}/export`);
+  assert.equal(exp.status, 200);
+  assert.ok(exp.data.templates.length >= 1);
+  assert.ok(exp.data.rules.length >= 1);
+  assert.ok(exp.data.tasks.length >= 1);
+});
+
 test('stats aggregate runs for the workspace', async () => {
   const { status, data } = await api('GET', `/api/workspaces/${wid}/stats`);
   assert.equal(status, 200);

@@ -84,6 +84,11 @@ export default function ResourcesModal({
           {resources.map((r) => (
             <div className="res-item" key={r.id}>
               <span className={`kind ${r.kind}`}>{r.kind}</span>
+              {r.health && (
+                <span title={`health: ${r.health} (${r.healthCheckedAt || 'never'})`}>
+                  {r.health === 'ok' ? '🟢' : r.health === 'auth' ? '🟠' : '🔴'}
+                </span>
+              )}
               <span className="name">{r.name}</span>
               {r.url && (
                 <span className="chip tag" title={r.url}>

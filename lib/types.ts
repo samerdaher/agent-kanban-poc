@@ -151,6 +151,9 @@ export interface Resource {
   url: string | null;
   /** whether an encrypted secret value is stored in the vault for this resource */
   hasSecret: boolean;
+  /** last scheduled MCP handshake result: 'ok' | 'auth' | 'error' | null (unchecked) */
+  health: string | null;
+  healthCheckedAt: string | null;
   addedAt: string;
 }
 
@@ -186,5 +189,34 @@ export interface Workspace {
   id: string;
   name: string;
   role: MemberRole;
+  createdAt: string;
+}
+
+/** Reusable task shape for one-click creation, schedules and rules. */
+export interface TaskTemplate {
+  id: string;
+  workspaceId: string;
+  name: string;
+  payload: Partial<Task> & { title: string; type: TaskType };
+  createdAt: string;
+}
+
+export interface Schedule {
+  id: string;
+  workspaceId: string;
+  cron: string;
+  templateId: string;
+  enabled: boolean;
+  lastRun: string | null;
+  createdAt: string;
+}
+
+/** "When a task with this tag completes → create a task from the template." */
+export interface Rule {
+  id: string;
+  workspaceId: string;
+  triggerTag: string;
+  templateId: string;
+  enabled: boolean;
   createdAt: string;
 }

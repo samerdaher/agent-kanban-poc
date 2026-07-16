@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Task, Resource, TaskType, TaskExecutor, Member } from '@/lib/types';
+import { useEffect, useState } from 'react';
+import { Task, Resource, TaskType, TaskExecutor, Member, TaskTemplate } from '@/lib/types';
 
 export default function NewTaskModal({
   workspaceId,
@@ -26,6 +26,30 @@ export default function NewTaskModal({
   const [deps, setDeps] = useState<string[]>([]);
   const [askHuman, setAskHuman] = useState(false);
   const [definitionOfDone, setDefinitionOfDone] = useState('');
+  const [templates, setTemplates] = useState<TaskTemplate[]>([]);
+  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/workspaces/${workspaceId}/templates`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => setTemplates(d.templates || []))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId]);
+
+  function applyTemplate(id: string) {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    const p = t.payload;
+    setTitle(p.title || '');
+    setDescription(p.description || '');
+    setType(p.type === 'human' ? 'human' : p.type === 'epic' ? 'epic' : 'agent');
+    setTags((p.tags || []).join(', '));
+    setRequirements((p.requirements || []).join(', '));
+    setAskHuman(Boolean(p.askHuman));
+    setDefinitionOfDone(p.definitionOfDone || '');
+    if (p.executor) setExecutor(p.executor);
+  }
   const [executor, setExecutor] = useState<TaskExecutor>('auto');
   const [assigneeUserId, setAssigneeUserId] = useState('');
   const [reviewerUserId, setReviewerUserId] = useState('');
@@ -57,6 +81,26 @@ export default function NewTaskModal({
         reviewerUserId: reviewerUserId || undefined,
       }),
     });
+    if (saveAsTemplate) {
+      await fetch(`/api/workspaces/${workspaceId}/templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: title.trim(),
+          payload: {
+            title: title.trim(),
+            description: description.trim(),
+            type,
+            status: 'sprint',
+            tags: tags.split(',').map((s) => s.trim()).filter(Boolean),
+            requirements: requirements.split(',').map((s) => s.trim()).filter(Boolean),
+            askHuman,
+            definitionOfDone: definitionOfDone.trim() || undefined,
+            executor,
+          },
+        }),
+      }).catch(() => {});
+    }
     setBusy(false);
     onCreated();
   }
@@ -66,6 +110,20 @@ export default function NewTaskModal({
       <div className="overlay" onClick={onClose} />
       <div className="modal">
         <h3>New Task</h3>
+
+        {templates.length > 0 && (
+          <div className="field">
+            <label>Start from template</label>
+            <select defaultValue="" onChange={(e) => e.target.value && applyTemplate(e.target.value)}>
+              <option value="">blank task…</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="field">
           <label>Who works this task?</label>
@@ -232,6 +290,13 @@ export default function NewTaskModal({
             </select>
           </div>
         )}
+
+        <div className="field checkbox-row">
+          <input id="saveTpl" type="checkbox" checked={saveAsTemplate} onChange={(e) => setSaveAsTemplate(e.target.checked)} />
+          <label htmlFor="saveTpl" style={{ margin: 0, textTransform: 'none', letterSpacing: 0 }}>
+            Save as template (for schedules & rules)
+          </label>
+        </div>
 
         <div className="field checkbox-row">
           <input id="toSprint" type="checkbox" checked={toSprint} onChange={(e) => setToSprint(e.target.checked)} />

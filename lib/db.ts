@@ -152,6 +152,36 @@ function migrateColumns(d: DatabaseSync) {
     d.exec('ALTER TABLE workspaces ADD COLUMN monthly_budget_usd REAL');
     d.exec('ALTER TABLE workspaces ADD COLUMN runner_paused INTEGER NOT NULL DEFAULT 0');
   }
+  const resCols2 = (d.prepare('PRAGMA table_info(resources)').all() as { name: string }[]).map((c) => c.name);
+  if (!resCols2.includes('health')) {
+    d.exec('ALTER TABLE resources ADD COLUMN health TEXT');
+    d.exec('ALTER TABLE resources ADD COLUMN health_checked_at TEXT');
+  }
+  d.exec(`CREATE TABLE IF NOT EXISTS task_templates (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT NOT NULL
+  )`);
+  d.exec(`CREATE TABLE IF NOT EXISTS schedules (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    cron TEXT NOT NULL,
+    template_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_run TEXT,
+    created_at TEXT NOT NULL
+  )`);
+  d.exec(`CREATE TABLE IF NOT EXISTS rules (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    trigger_tag TEXT NOT NULL,
+    template_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  )`);
   d.exec(`CREATE TABLE IF NOT EXISTS audit_log (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
